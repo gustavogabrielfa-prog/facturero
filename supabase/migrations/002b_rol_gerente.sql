@@ -1,22 +1,10 @@
 -- =====================================================================
--- Rol 'gerente': ve listado, totales y reportes SOLO de su sucursal.
+-- Rol 'gerente' — PARTE 2 de 2 (ejecutar después de 002a_rol_gerente_enum.sql)
+-- Gerente: ve listado, totales y reportes SOLO de su sucursal.
 -- Carga comprobantes solo en su sucursal y no puede eliminar.
---
--- Supabase Dashboard > SQL Editor. Se ejecuta en DOS PASOS, porque
--- Postgres no deja usar un valor nuevo de enum en la misma ejecución
--- en que se crea. Se puede repetir sin romper nada.
+-- Se puede ejecutar más de una vez sin romper nada.
 -- =====================================================================
 
-
--- ---------------------------------------------------------------------
--- PASO 1 — seleccioná solo esta línea y Run
--- ---------------------------------------------------------------------
-alter type public.rol_usuario add value if not exists 'gerente';
-
-
--- ---------------------------------------------------------------------
--- PASO 2 — seleccioná desde acá hasta el final y Run
--- ---------------------------------------------------------------------
 create or replace function public.es_gerente()
 returns boolean
 language sql stable security definer set search_path = ''
