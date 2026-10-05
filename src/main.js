@@ -13,6 +13,7 @@ const state = {
   perfil: null,        // { id, email, nombre, rol, sucursal_id }
   sucursales: [],
   proveedores: [],
+  tributos: [],        // otros tributos y tasas (lista editable por el admin)
   booting: true,
   bootError: "",
 };
@@ -44,6 +45,9 @@ const esGerente = () => state.perfil?.rol === "gerente";
 const veListado = () => esAdmin() || esGerente();   // gerente: solo su sucursal (lo aplica RLS)
 const sucursalNombre = (id) => state.sucursales.find((s) => s.id === id)?.nombre || "Sin sucursal";
 const proveedorNombre = (id) => state.proveedores.find((p) => p.id === id)?.nombre || "Proveedor sin datos";
+const tributoNombre = (id) => state.tributos.find((t) => t.id === id)?.nombre || "Tributo eliminado";
+const tributosActivos = () => state.tributos.filter((t) => t.activo);
+const sumTributos = (c) => Object.values(c.tributos || {}).reduce((a, v) => a + (Number(v) || 0), 0);
 
 /* ---------- DATA ---------- */
 async function loadBase() {
@@ -57,6 +61,13 @@ async function loadBase() {
   state.perfil = perfil.data;
   state.sucursales = sucursales.data;
   state.proveedores = proveedores;
+  await loadTributos();
+}
+
+/** Si la tabla todavía no existe (falta correr el SQL 004), la app sigue funcionando sin tributos. */
+async function loadTributos() {
+  const { data, error } = await sb.from("tributos").select("*").order("orden").order("nombre");
+  state.tributos = error ? [] : data;
 }
 
 let loadSeq = 0;
@@ -268,7 +279,7 @@ function newDraft() {
     sucursalId: state.perfil.sucursal_id || state.sucursales[0]?.id || "",
     proveedorId: state.proveedores[0]?.id || "",
     fecha: todayISO(), numero: "", monto: "",
-    iva21: "", iva105: "", iva27: "", iva5: "", iva25: "", iibb: "", notas: "",
+    iva21: "", iva105: "", iva27: "", iva5: "", iva25: "", iibb: "", notas: "", tributos: {},
   };
 }
 
@@ -324,6 +335,7 @@ function pageSubir() {
 
   <div class="section-label">Otros impuestos</div>
   ${ivaField("iibb", "Ingresos Brutos (Misiones)")}
+  ${tributosActivos().length ? `<div class="row2">${tributosActivos().map((t) => `<div class="field"><label>${esc(t.nombre)}</label><input type="number" step="0.01" min="0" data-trib="${t.id}" value="${esc(d.tributos?.[t.id] ?? "")}" placeholder="0"></div>`).join("")}</div>` : ""}
 
   <div class="field"><label>Notas (opcional)</label><textarea id="f_notas">${esc(d.notas)}</textarea></div>
 
@@ -366,6 +378,7 @@ function syncDraft() {
   const map = { sucursalId: "f_sucursal", proveedorId: "f_proveedor", fecha: "f_fecha", numero: "f_numero", monto: "f_monto", notas: "f_notas" };
   for (const [k, id] of Object.entries(map)) { const v = val(id); if (v !== undefined) draft[k] = v; }
   for (const k of ["iva21", "iva105", "iva27", "iva5", "iva25", "iibb"]) { const v = val("f_" + k); if (v !== undefined) draft[k] = v; }
+  document.querySelectorAll("[data-trib]").forEach((el) => { draft.tributos[el.dataset.trib] = el.value; });
 }
 
 async function crearProveedor(nombre, cuit) {
@@ -390,6 +403,13 @@ async function guardarComprobante() {
     numero: d.numero.trim(), monto: Number(d.monto), notas: d.notas.trim() || null,
   };
   for (const k of ["iva21", "iva105", "iva27", "iva5", "iva25", "iibb"]) row[k] = Number(d[k]) || 0;
+  const trib = {};
+  for (const [id, v] of Object.entries(d.tributos || {})) {
+    if (v === "") continue;
+    if (isNaN(Number(v)) || Number(v) < 0) { toast("Revisá los montos de tributos y tasas."); return; }
+    if (Number(v) > 0) trib[id] = Number(v);
+  }
+  if (Object.keys(trib).length) row.tributos = trib;   // solo si hay montos: no depende de la columna si no se usa
 
   saving = true; render();
   // Sin .select(): el insert no depende de poder leer la fila
@@ -542,6 +562,8 @@ function pageListado() {
       ${IMPUESTOS.map(([k, label]) => `<tr><td>${label}</td><td>${fmtMoney(t[k])}</td></tr>`).join("")}
       <tr class="tot"><td><b>Total IVA</b></td><td><b>${fmtMoney(t.ivaTotal)}</b></td></tr>
       <tr><td>Ingresos Brutos (Misiones)</td><td>${fmtMoney(t.iibb)}</td></tr>
+      ${[...new Set([...tributosActivos().map((x) => x.id), ...Object.keys(t.tributos)])]
+        .map((id) => `<tr><td>${esc(tributoNombre(id))}</td><td>${fmtMoney(t.tributos[id] || 0)}</td></tr>`).join("")}
     </table>
   </div>
   <div class="total-box mb26">
@@ -586,7 +608,7 @@ function pageListado() {
   </div>
   ${chartCompras(hist)}` : ""}` : ""}
   ${hist.length ? hist.map((c) => {
-    const imp = ["iva21", "iva105", "iva27", "iva5", "iva25", "iibb"].reduce((a, k) => a + (Number(c[k]) || 0), 0);
+    const imp = ["iva21", "iva105", "iva27", "iva5", "iva25", "iibb"].reduce((a, k) => a + (Number(c[k]) || 0), 0) + sumTributos(c);
     return `<div class="card">
       <div class="card-icon">🧾</div>
       <div class="card-body">
@@ -604,6 +626,8 @@ function pageListado() {
   }).join("") : `<div class="empty-state panel"><span class="serif">Sin comprobantes</span>No hay comprobantes para este filtro.</div>`}
   `}
 
+  ${esAdmin() ? seccionTributos() : ""}
+
   ${esAdmin() ? `<div class="section-label">Migrar datos de la versión anterior</div>
   <div class="filters">
     <button id="btnImport">📤 Importar copia de seguridad (.json)</button>
@@ -611,6 +635,31 @@ function pageListado() {
   </div>
   <div class="hint">Subí las copias descargadas desde el Facturero anterior (una por sucursal). Los comprobantes repetidos se ignoran.</div>` : ""}
   `;
+}
+
+/* ---------- OTROS TRIBUTOS Y TASAS (admin) ---------- */
+function seccionTributos() {
+  const activos = tributosActivos(), quitados = state.tributos.filter((t) => !t.activo);
+  return `
+  <div class="section-label">Otros tributos y tasas</div>
+  <div class="hint" style="margin-top:0;">Aparecen como campos al cargar un comprobante y se suman en los impuestos del período.</div>
+  <div class="panel mb16" style="padding:6px 18px;">
+    ${activos.length ? `<table class="data-table">${activos.map((t) => `<tr>
+      <td>${esc(t.nombre)}</td>
+      <td><button class="linkbtn" data-tribren="${t.id}">Renombrar</button> <button class="linkbtn" data-tribtoggle="${t.id}">Quitar</button></td>
+    </tr>`).join("")}</table>` : `<div class="loading" style="padding:16px;">No hay tributos cargados.</div>`}
+  </div>
+  <div class="provrow mb16">
+    <input type="text" id="tribNuevo" placeholder="Ej: Tasa de seguridad e higiene" style="flex:1; padding:10px 12px; border:1px solid var(--line); border-radius:4px; background:var(--panel); color:var(--ink);">
+    <button id="btnTribAdd" type="button">+ Agregar</button>
+  </div>
+  ${quitados.length ? `<div class="hint">Quitados (los comprobantes viejos los conservan): ${quitados.map((t) => `${esc(t.nombre)} <button class="linkbtn" data-tribtoggle="${t.id}">Reactivar</button>`).join(" · ")}</div>` : ""}`;
+}
+
+async function guardarTributo(op) {
+  const { error } = await op;
+  if (error) { toast(error.code === "23505" ? "Ya existe un tributo con ese nombre." : errorMsg(error)); return false; }
+  await loadTributos(); render(); return true;
 }
 
 /* ---------- IMPORTAR BACKUP DEL ARTEFACTO ANTERIOR ---------- */
@@ -797,9 +846,26 @@ function wirePage() {
         list: listaFiltrada(), desde, hasta,
         alcance: esGerente() ? sucursalNombre(state.perfil.sucursal_id)
           : sucursalFilter === "todas" ? "Todas las sucursales" : sucursalNombre(sucursalFilter),
-        proveedorNombre, sucursalNombre,
+        proveedorNombre, sucursalNombre, tributoNombre,
       });
     });
+    on("btnTribAdd", "click", async () => {
+      const nombre = document.getElementById("tribNuevo").value.trim();
+      if (!nombre) { toast("Escribí el nombre del tributo o tasa."); return; }
+      const orden = Math.max(0, ...state.tributos.map((t) => t.orden || 0)) + 1;
+      if (await guardarTributo(sb.from("tributos").insert({ nombre, orden }))) toast("Tributo agregado.");
+    });
+    document.querySelectorAll("[data-tribtoggle]").forEach((b) => b.addEventListener("click", async () => {
+      const t = state.tributos.find((x) => x.id === b.dataset.tribtoggle);
+      if (t.activo && !confirm(`¿Quitar "${t.nombre}"? Deja de aparecer al cargar; los comprobantes ya cargados lo conservan.`)) return;
+      await guardarTributo(sb.from("tributos").update({ activo: !t.activo }).eq("id", t.id));
+    }));
+    document.querySelectorAll("[data-tribren]").forEach((b) => b.addEventListener("click", async () => {
+      const t = state.tributos.find((x) => x.id === b.dataset.tribren);
+      const nombre = prompt("Nuevo nombre:", t.nombre)?.trim();
+      if (!nombre || nombre === t.nombre) return;
+      await guardarTributo(sb.from("tributos").update({ nombre }).eq("id", t.id));
+    }));
     const input = document.getElementById("importFile");
     on("btnImport", "click", () => input.click());
     input?.addEventListener("change", (e) => { const f = e.target.files[0]; if (f) importarBackup(f); });

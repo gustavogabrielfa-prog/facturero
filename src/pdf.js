@@ -5,7 +5,7 @@ import { fmtMoney, fmtDate, computeTotals, groupBy, IMPUESTOS } from "./format.j
  * Genera y descarga el reporte PDF de compras.
  * @param {{list:any[], desde:string, hasta:string, alcance:string, proveedorNombre:(id)=>string, sucursalNombre:(id)=>string}} opts
  */
-export function generarReportePDF({ list, desde, hasta, alcance, proveedorNombre, sucursalNombre }) {
+export function generarReportePDF({ list, desde, hasta, alcance, proveedorNombre, sucursalNombre, tributoNombre = (id) => id }) {
   const doc = new jsPDF();
   const t = computeTotals(list);
   const bySuc = groupBy(list, (c) => sucursalNombre(c.sucursal_id)).sort((a, b) => (b.fact + b.noFact) - (a.fact + a.noFact));
@@ -31,6 +31,7 @@ export function generarReportePDF({ list, desde, hasta, alcance, proveedorNombre
   for (const [k, label] of IMPUESTOS) line(`${label}: ${fmtMoney(t[k])}`);
   line(`Total IVA: ${fmtMoney(t.ivaTotal)}`);
   line(`Ingresos Brutos (Misiones): ${fmtMoney(t.iibb)}`);
+  for (const [id, v] of Object.entries(t.tributos)) if (v) line(`${tributoNombre(id)}: ${fmtMoney(v)}`);
   line(`Total impuestos: ${fmtMoney(t.impuestosTotal)}`, 9);
 
   if (bySuc.length > 1) {

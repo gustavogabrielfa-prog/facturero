@@ -32,14 +32,18 @@ export const IMPUESTOS = [
 ];
 
 export function computeTotals(list) {
-  const t = { fact: 0, noFact: 0, iva21: 0, iva105: 0, iva27: 0, iva5: 0, iva25: 0, iibb: 0 };
+  const t = { fact: 0, noFact: 0, iva21: 0, iva105: 0, iva27: 0, iva5: 0, iva25: 0, iibb: 0, tributos: {}, tributosTotal: 0 };
   for (const c of list) {
     if (c.grupo === "FACTURADO") t.fact += Number(c.monto) || 0; else t.noFact += Number(c.monto) || 0;
     for (const [k] of IMPUESTOS) t[k] += Number(c[k]) || 0;
     t.iibb += Number(c.iibb) || 0;
+    for (const [id, v] of Object.entries(c.tributos || {})) {
+      t.tributos[id] = (t.tributos[id] || 0) + (Number(v) || 0);
+      t.tributosTotal += Number(v) || 0;
+    }
   }
   t.ivaTotal = t.iva21 + t.iva105 + t.iva27 + t.iva5 + t.iva25;
-  t.impuestosTotal = t.ivaTotal + t.iibb;
+  t.impuestosTotal = t.ivaTotal + t.iibb + t.tributosTotal;
   t.total = t.fact + t.noFact;
   return t;
 }
