@@ -4,7 +4,6 @@ import {
   esc, fmtMoney, fmtDate, todayISO, weekRange, monthRange, yearRange,
   IMPUESTOS, computeTotals, groupBy, groupByPeriod, periodLabel,
   periodKey, periodKeysBetween, periodShort, fmtCompact,
-  last30Range, prevMonthRange, prevRange, rangeLabel,
 } from "./format.js";
 import { generarReportePDF } from "./pdf.js";
 
@@ -26,9 +25,6 @@ let loginError = "";
 // Listado (solo admin)
 let [desde, hasta] = monthRange();
 let comprobantes = [];
-let comprobantesPrev = [];   // período anterior comparable (para ▲▼ %)
-let prev = prevRange(desde, hasta);
-let rankingAll = false;
 let listLoaded = false;
 let listLoading = false;
 let sucursalFilter = "todas";
@@ -69,17 +65,12 @@ async function loadComprobantes({ silent = false } = {}) {
   listLoaded = true;               // evita reintentos en bucle si falla
   if (!silent) { listLoading = true; render(); }
   try {
-    const p = prevRange(desde, hasta);
-    const [rows, rowsPrev] = await Promise.all([
-      fetchAll(() =>
-        sb.from("comprobantes").select("*")
-          .gte("fecha", desde).lte("fecha", hasta)
-          .order("fecha", { ascending: false }).order("created_at", { ascending: false })),
-      fetchAll(() =>
-        sb.from("comprobantes").select("proveedor_id, sucursal_id, grupo, monto, fecha")
-          .gte("fecha", p.desde).lte("fecha", p.hasta)),
-    ]);
-    if (seq === loadSeq) { comprobantes = rows; comprobantesPrev = rowsPrev; prev = p; }
+    const rows = await fetchAll(() =>
+      sb.from("comprobantes").select("*")
+        .gte("fecha", desde).lte("fecha", hasta)
+        .order("fecha", { ascending: false }).order("created_at", { ascending: false })
+    );
+    if (seq === loadSeq) comprobantes = rows;
   } catch (e) {
     if (seq === loadSeq) toast(errorMsg(e));
   } finally {
@@ -426,104 +417,9 @@ function tablaResumen(rows, labelFn) {
   </table>`;
 }
 
-function listaFiltrada(list = comprobantes) {
-  if (esGerente()) return list.filter((c) => c.sucursal_id === state.perfil.sucursal_id);
-  return sucursalFilter === "todas" ? list : list.filter((c) => c.sucursal_id === sucursalFilter);
-}
-
-const sumMonto = (list) => list.reduce((a, c) => a + (Number(c.monto) || 0), 0);
-const sumGrupo = (list, g) => sumMonto(list.filter((c) => c.grupo === g));
-
-/** "▲ 12% vs. 01/09 al 05/09" — neutro: comprar más no es bueno ni malo per se. */
-function deltaHtml(cur, ant) {
-  const label = rangeLabel(prev.desde, prev.hasta);
-  if (!cur && !ant) return "";
-  if (!ant) return `<div class="kpi-delta">Sin compras en ${label}</div>`;
-  const pct = ((cur - ant) / ant) * 100;
-  const r = Math.round(Math.abs(pct));
-  const flecha = r === 0 ? "=" : pct > 0 ? "▲" : "▼";
-  return `<div class="kpi-delta" title="${label}: ${fmtMoney(ant)}">${flecha} ${r}% vs. ${label}</div>`;
-}
-
-/** Período vacío: dice qué se está mirando y ofrece salidas. */
-function emptyPeriodo() {
-  const prevBase = listaFiltrada(comprobantesPrev);
-  return `<div class="empty-state panel mb26">
-    <span class="serif">Sin comprobantes del ${esc(rangeLabel(desde, hasta))}</span>
-    ${prevBase.length
-      ? `En ${esc(rangeLabel(prev.desde, prev.hasta))} hubo ${prevBase.length} comprobante${prevBase.length === 1 ? "" : "s"} por ${fmtMoney(sumMonto(prevBase))}.`
-      : "No se cargaron comprobantes en estas fechas."}
-    <div class="filters empty-actions">
-      ${prevBase.length ? `<button data-range="anterior">Ver ${esc(rangeLabel(prev.desde, prev.hasta))}</button>` : ""}
-      <button data-range="mesant">Mes anterior</button>
-      <button data-range="30d">Últimos 30 días</button>
-      <button data-range="año">Este año</button>
-    </div>
-  </div>`;
-}
-
-/** Ranking de proveedores por monto, con % del total y variación vs. período anterior. */
-function rankingProveedores(base, prevBase) {
-  const total = sumMonto(base);
-  const rows = groupBy(base, (c) => c.proveedor_id)
-    .map((r) => ({ id: r.key, total: r.fact + r.noFact, n: base.filter((c) => c.proveedor_id === r.key).length }))
-    .sort((a, b) => b.total - a.total);
-  if (!rows.length) return "";
-  const antPor = {};
-  for (const c of prevBase) antPor[c.proveedor_id] = (antPor[c.proveedor_id] || 0) + (Number(c.monto) || 0);
-  const top = rows[0].total || 1;
-  const visibles = rankingAll ? rows : rows.slice(0, 8);
-  const top3 = rows.slice(0, 3).reduce((a, r) => a + r.total, 0);
-  const pct = (v) => (total ? Math.round((v / total) * 100) : 0);
-
-  return `
-  <div class="section-label" style="border-top:none; padding-top:0;">Proveedores — dónde se concentra la compra</div>
-  <div class="panel mb26 rank-panel">
-    ${rows.length > 3 ? `<p class="rank-insight">Los 3 primeros concentran el <b>${pct(top3)}%</b> de las compras del período.</p>` : ""}
-    ${visibles.map((r, i) => {
-      const ant = antPor[r.id] || 0;
-      const d = !ant ? "nuevo en el período" : (() => {
-        const p = Math.round(((r.total - ant) / ant) * 100);
-        return p === 0 ? "= que el período anterior" : `${p > 0 ? "▲" : "▼"} ${Math.abs(p)}% vs. anterior`;
-      })();
-      return `<button class="rank-row ${provFilter === r.id ? "active" : ""}" data-rankprov="${r.id}" title="Ver la ficha y las facturas de este proveedor">
-        <span class="rank-pos">${i + 1}</span>
-        <span class="rank-main">
-          <span class="rank-top"><span class="rank-name">${esc(proveedorNombre(r.id))}</span><span class="rank-val">${fmtMoney(r.total)}</span></span>
-          <span class="rank-bar"><i style="width:${(r.total / top) * 100}%"></i></span>
-          <span class="rank-sub"><span>${pct(r.total)}% del total · ${r.n} comprobante${r.n === 1 ? "" : "s"}</span><span>${d}</span></span>
-        </span>
-      </button>`;
-    }).join("")}
-    ${rows.length > 8 ? `<button class="linkbtn rank-more" id="btnRankAll">${rankingAll ? "Ver menos" : `Ver los ${rows.length} proveedores`}</button>` : ""}
-  </div>`;
-}
-
-/** Ficha del proveedor elegido (sobre todo el período, sin el filtro Facturado/No facturado). */
-function fichaProveedor(base, prevBase) {
-  const list = base.filter((c) => c.proveedor_id === provFilter);
-  if (!list.length) return "";
-  const total = sumMonto(list), fact = sumGrupo(list, "FACTURADO");
-  const ant = sumMonto(prevBase.filter((c) => c.proveedor_id === provFilter));
-  const share = sumMonto(base) ? Math.round((total / sumMonto(base)) * 100) : 0;
-  const fechas = [...new Set(list.map((c) => c.fecha))].sort();
-  const ultima = fechas[fechas.length - 1];
-  const diasDesde = Math.round((new Date(todayISO() + "T00:00:00") - new Date(ultima + "T00:00:00")) / 864e5);
-  const span = fechas.length > 1 ? Math.round((new Date(ultima) - new Date(fechas[0])) / 864e5) : 0;
-  const frecuencia = fechas.length > 1 ? `Cada ${Math.max(1, Math.round(span / (fechas.length - 1)))} días` : "Una sola compra";
-  const tile = (label, value, sub = "") => `<div class="kpi"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div>${sub}</div>`;
-  return `
-  <div class="ficha mb16">
-    <div class="ficha-head"><span class="serif">${esc(proveedorNombre(provFilter))}</span><button class="linkbtn" id="btnQuitarProv">Quitar filtro</button></div>
-    <div class="kpi-row ficha-grid">
-      ${tile("Total del período", fmtMoney(total), deltaHtml(total, ant))}
-      ${tile("Parte de tus compras", share + "%")}
-      ${tile("Promedio por factura", fmtMoney(total / list.length), `<div class="kpi-delta">${list.length} comprobante${list.length === 1 ? "" : "s"}</div>`)}
-      ${tile("Frecuencia", frecuencia, `<div class="kpi-delta">${fechas.length} día${fechas.length === 1 ? "" : "s"} con compras</div>`)}
-      ${tile("Última compra", fmtDate(ultima), `<div class="kpi-delta">${diasDesde <= 0 ? "Hoy" : diasDesde === 1 ? "Ayer" : "Hace " + diasDesde + " días"}</div>`)}
-      ${tile("Facturado", Math.round((fact / (total || 1)) * 100) + "%", `<div class="kpi-delta">No facturado ${100 - Math.round((fact / (total || 1)) * 100)}%</div>`)}
-    </div>
-  </div>`;
+function listaFiltrada() {
+  if (esGerente()) return comprobantes.filter((c) => c.sucursal_id === state.perfil.sucursal_id);
+  return sucursalFilter === "todas" ? comprobantes : comprobantes.filter((c) => c.sucursal_id === sucursalFilter);
 }
 
 /** Proveedores presentes en la lista (+ el elegido aunque no tenga comprobantes), con cantidad. */
@@ -555,9 +451,8 @@ function chartCompras(list) {
   chartData = { cols, gran };
 
   const max = Math.max(0, ...cols.map((c) => c.fact + c.noFact));
-  // 12% de aire arriba para que la etiqueta del pico no se corte
-  const step = max > 0 ? niceStep(max * 1.12) : 1;
-  const top = max > 0 ? Math.ceil((max * 1.12) / step) * step : 4;
+  const step = max > 0 ? niceStep(max) : 1;
+  const top = max > 0 ? Math.ceil(max / step) * step : 4;
   const ticks = []; for (let v = 0; v <= top + step / 2; v += step) ticks.push(v);
   const pct = (v) => (v / top) * 100;
   const multiYear = desde.slice(0, 4) !== hasta.slice(0, 4);
@@ -602,7 +497,6 @@ function chartCompras(list) {
 
 function pageListado() {
   const base = listaFiltrada();
-  const prevBase = listaFiltrada(comprobantesPrev);
   const t = computeTotals(base);
   const bySuc = groupBy(comprobantes, (c) => sucursalNombre(c.sucursal_id)).sort((a, b) => (b.fact + b.noFact) - (a.fact + a.noFact));
   const periods = groupByPeriod(base, periodGranularity);
@@ -620,8 +514,6 @@ function pageListado() {
     <div class="filters">
       <button data-range="semana">Esta semana</button>
       <button data-range="mes">Este mes</button>
-      <button data-range="mesant">Mes anterior</button>
-      <button data-range="30d">Últimos 30 días</button>
       <button data-range="año">Este año</button>
     </div>
     <div class="row2">
@@ -638,14 +530,12 @@ function pageListado() {
     </div>
   </div>
 
-  ${listLoading ? `<div class="loading">Cargando comprobantes…</div>` : !base.length ? emptyPeriodo() : `
+  ${listLoading ? `<div class="loading">Cargando comprobantes…</div>` : `
   <div class="kpi-row">
-    <div class="kpi"><div class="kpi-label">Facturado (blanco)</div><div class="kpi-value">${fmtMoney(t.fact)}</div>${deltaHtml(t.fact, sumGrupo(prevBase, "FACTURADO"))}</div>
-    <div class="kpi"><div class="kpi-label">No facturado (negro)</div><div class="kpi-value">${fmtMoney(t.noFact)}</div>${deltaHtml(t.noFact, sumGrupo(prevBase, "NO_FACTURADO"))}</div>
-    <div class="kpi"><div class="kpi-label">Total real</div><div class="kpi-value">${fmtMoney(t.total)}</div>${deltaHtml(t.total, sumMonto(prevBase))}</div>
+    <div class="kpi"><div class="kpi-label">Facturado (blanco)</div><div class="kpi-value">${fmtMoney(t.fact)}</div></div>
+    <div class="kpi"><div class="kpi-label">No facturado (negro)</div><div class="kpi-value">${fmtMoney(t.noFact)}</div></div>
+    <div class="kpi"><div class="kpi-label">Total real</div><div class="kpi-value">${fmtMoney(t.total)}</div></div>
   </div>
-
-  ${rankingProveedores(base, prevBase)}
 
   <div class="section-label" style="border-top:none; padding-top:0;">Impuestos — para cotejar con tu contador o ARCA</div>
   <div class="panel" style="padding:6px 18px; margin-bottom:12px;">
@@ -672,7 +562,7 @@ function pageListado() {
     ? `<div class="panel mb26" style="padding:0 18px;">${tablaResumen(periods, (k) => periodLabel(k, periodGranularity))}</div>`
     : `<div class="empty-state panel mb26">No hay comprobantes en este período.</div>`}
 
-  <div class="section-label" style="border-top:none; padding-top:0;" id="histAnchor">Historial</div>
+  <div class="section-label" style="border-top:none; padding-top:0;">Historial</div>
   <div class="filters">
     <button data-filter="todos" class="${listFilter === "todos" ? "active" : ""}">Todos</button>
     <button data-filter="facturado" class="${listFilter === "facturado" ? "active" : ""}">Facturado</button>
@@ -685,7 +575,6 @@ function pageListado() {
       ${provOpts.map((p) => `<option value="${p.id}" ${provFilter === p.id ? "selected" : ""}>${esc(p.nombre)} (${p.n})</option>`).join("")}
     </select>
   </div>
-  ${provFilter !== "todos" ? fichaProveedor(base, prevBase) : ""}
   ${hist.length ? `
   <div class="total-box" style="margin-bottom:${listFilter === "todos" ? "10px" : "16px"};">
     <span>Total${provFilter !== "todos" ? " · " + esc(proveedorNombre(provFilter)) : ""}<small class="total-sub">${hist.length} comprobante${hist.length === 1 ? "" : "s"}${ht.impuestosTotal > 0 ? " · Impuestos " + fmtMoney(ht.impuestosTotal) : ""}</small></span>
@@ -713,7 +602,7 @@ function pageListado() {
         ${esAdmin() ? `<button class="btn secondary small" data-del="${c.id}">Eliminar</button>` : ""}
       </div>
     </div>`;
-  }).join("") : `<div class="empty-state panel"><span class="serif">Sin comprobantes</span>Ningún comprobante coincide con este filtro en el período.<div class="filters empty-actions"><button id="btnLimpiarFiltros">Quitar filtros</button></div></div>`}
+  }).join("") : `<div class="empty-state panel"><span class="serif">Sin comprobantes</span>No hay comprobantes para este filtro.</div>`}
   `}
 
   ${esAdmin() ? `<div class="section-label">Migrar datos de la versión anterior</div>
@@ -889,8 +778,7 @@ function wirePage() {
   if (route === "listado") {
     document.querySelectorAll("[data-range]").forEach((b) => b.addEventListener("click", () => {
       const r = b.dataset.range;
-      [desde, hasta] = r === "semana" ? weekRange() : r === "mes" ? monthRange() : r === "mesant" ? prevMonthRange()
-        : r === "30d" ? last30Range() : r === "anterior" ? [prev.desde, prev.hasta] : yearRange();
+      [desde, hasta] = r === "semana" ? weekRange() : r === "mes" ? monthRange() : yearRange();
       loadComprobantes();
     }));
     on("btnAplicar", "click", () => {
@@ -902,14 +790,6 @@ function wirePage() {
     document.querySelectorAll("[data-filter]").forEach((b) => b.addEventListener("click", () => { listFilter = b.dataset.filter; render(); }));
     document.querySelectorAll("[data-gran]").forEach((b) => b.addEventListener("click", () => { periodGranularity = b.dataset.gran; render(); }));
     on("fProv", "change", (e) => { provFilter = e.target.value; render(); });
-    const irAlHistorial = () => document.getElementById("histAnchor")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    document.querySelectorAll("[data-rankprov]").forEach((b) => b.addEventListener("click", () => {
-      provFilter = provFilter === b.dataset.rankprov ? "todos" : b.dataset.rankprov;
-      render(); if (provFilter !== "todos") irAlHistorial();
-    }));
-    on("btnRankAll", "click", () => { rankingAll = !rankingAll; render(); });
-    on("btnQuitarProv", "click", () => { provFilter = "todos"; render(); });
-    on("btnLimpiarFiltros", "click", () => { provFilter = "todos"; listFilter = "todos"; render(); });
     document.querySelectorAll("[data-cgran]").forEach((b) => b.addEventListener("click", () => { chartGran = b.dataset.cgran; render(); }));
     wireChartTip();
     document.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async () => {
