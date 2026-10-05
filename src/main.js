@@ -199,7 +199,6 @@ function shell(bodyHtml, logged, tabs = false) {
       <div class="brand"><div class="brand-mark">F</div><div class="brand-name">Facturero</div></div>
       ${logged ? `<div class="top-right">
         ${badge ? `<div class="suc-badge">${esc(badge)}</div>` : ""}
-        <button class="linkbtn" id="btnPass">Contraseña</button>
         <button class="linkbtn" id="btnLogout">Salir</button>
       </div>` : ""}
     </header>
@@ -719,12 +718,6 @@ function wireLogin() {
 
 function wireShell() {
   on("btnLogout", "click", async () => { await sb.auth.signOut(); location.hash = ""; });
-  on("btnPass", "click", async () => {
-    const next = prompt("Nueva contraseña (mínimo 6 caracteres):");
-    if (!next) return;
-    const { error } = await sb.auth.updateUser({ password: next });
-    toast(error ? errorMsg(error) : "Contraseña actualizada.");
-  });
   on("btnRetry", "click", () => onSession({ ...state.session }).catch(() => {}));
   document.querySelectorAll("[data-route]").forEach((b) => b.addEventListener("click", () => { location.hash = b.dataset.route; }));
 }
