@@ -202,3 +202,5 @@ button.prov-row:hover, button.prov-row:focus-visible{background:color-mix(in srg
 .prov-amt b{color:var(--ink);}
 .prov-hint{font-size:12px; color:var(--muted); margin-top:10px;}
 @media (max-width:480px){ .prov-row{grid-template-columns:minmax(0,1fr) auto;} .prov-bar{grid-column:1 / -1; grid-row:2;} }
+.hoy-acc{display:flex; gap:6px; justify-content:flex-end;}
+.hoy-acc .btn{padding:5px 9px; font-size:12px;}

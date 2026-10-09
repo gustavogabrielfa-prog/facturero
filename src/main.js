@@ -3,7 +3,7 @@ import { sb, configOk, fetchAll, errorMsg } from "./supabase.js";
 import {
   esc, fmtMoney, fmtDate, todayISO, weekRange, monthRange, yearRange,
   IMPUESTOS, computeTotals, groupBy, groupByPeriod, periodLabel,
-  periodKey, periodKeysBetween, periodShort, fmtCompact, parseMonto, formatMontoTexto,
+  periodKey, periodKeysBetween, periodShort, fmtCompact, parseMonto, formatMontoTexto, montoTexto,
 } from "./format.js";
 import { generarReportePDF } from "./pdf.js";
 
@@ -19,6 +19,7 @@ const state = {
 };
 let route = location.hash.replace("#", "") || "subir";
 let draft = null;
+let editId = null;           // id del comprobante que el admin está corrigiendo (null = alta nueva)
 let ultimoProveedorId = "";   // queda elegido hasta que lo cambien o se cierre la app
 let showNewProv = false;
 let saving = false;
@@ -159,7 +160,7 @@ async function onSession(session) {
   if (!session) {
     unsubscribeRealtime();
     Object.assign(state, { perfil: null, sucursales: [], proveedores: [], booting: false, bootError: "" });
-    comprobantes = []; listLoaded = false; draft = null; ultimoProveedorId = "";
+    comprobantes = []; listLoaded = false; draft = null; editId = null; ultimoProveedorId = "";
     hoy = []; hoyLoaded = false; clearTimeout(medianocheTimer);
     render(); return;
   }
@@ -289,7 +290,9 @@ function pageSubir() {
   const d = draft;
   const ivaField = (k, label) => `<div class="field"><label>${label}</label><input type="text" inputmode="decimal" autocomplete="off" class="monto" id="f_${k}" value="${esc(d[k])}" placeholder="0"></div>`;
   return `
-  <div class="pagehead"><h1 class="serif">Subir comprobante</h1><p>Cargá los datos del comprobante — sin adjuntar archivos.</p></div>
+  <div class="pagehead">${editId
+    ? `<h1 class="serif">Corregir comprobante</h1><p>Cambiá lo que haga falta y guardá. El comprobante se actualiza, no se duplica.</p>`
+    : `<h1 class="serif">Subir comprobante</h1><p>Cargá los datos del comprobante — sin adjuntar archivos.</p>`}</div>
 
   <div class="badge-group" id="grupoToggle">
     <button data-grupo="FACTURADO" class="${d.grupo === "FACTURADO" ? "active fact" : ""}">Facturado</button>
@@ -340,7 +343,8 @@ function pageSubir() {
 
   <div class="field"><label>Notas (opcional)</label><textarea id="f_notas">${esc(d.notas)}</textarea></div>
 
-  <button class="btn" id="btnGuardar" ${saving ? "disabled" : ""}>${saving ? "Guardando…" : "Guardar comprobante"}</button>
+  <button class="btn" id="btnGuardar" ${saving ? "disabled" : ""}>${saving ? "Guardando…" : editId ? "Guardar cambios" : "Guardar comprobante"}</button>
+  ${editId ? `<button class="btn secondary" id="btnCancelarEdit" style="margin-top:10px;">Cancelar corrección</button>` : ""}
 
   <div class="section-label" style="margin-top:28px;">Cargados hoy</div>
   <div id="hoyList"><div class="loading">Cargando…</div></div>
@@ -359,15 +363,20 @@ function renderHoy() {
   const iva = (c) => IMPUESTOS.reduce((a, [k]) => a + (Number(c[k]) || 0), 0);
   // Lista simple para revisar de un vistazo: total, IVA e IIBB de cada comprobante (sin suma del día)
   el.innerHTML = `<div class="hoy-wrap"><table class="data-table hoy-table">
-    <thead><tr><th>Comprobante</th><th>Total</th><th>IVA</th><th>IIBB</th></tr></thead>
+    <thead><tr><th>Comprobante</th><th>Total</th><th>IVA</th><th>IIBB</th>${esAdmin() ? "<th></th>" : ""}</tr></thead>
     <tbody>${hoy.map((c) => `<tr>
       <td><span class="${c.grupo === "FACTURADO" ? "fact" : "nofact"}" title="${c.grupo === "FACTURADO" ? "Facturado" : "No facturado"}">●</span> ${esc(proveedorNombre(c.proveedor_id))}
         <small>${hora(c.created_at)} hs · N° ${esc(c.numero)} · ${fmtDate(c.fecha)}${esAdmin() ? " · " + esc(sucursalNombre(c.sucursal_id)) : ""}</small></td>
       <td class="tot">${fmtMoney(c.monto)}</td>
       <td>${fmtMoney(iva(c))}</td>
       <td>${fmtMoney(c.iibb)}</td>
+      ${esAdmin() ? `<td><div class="hoy-acc"><button class="btn secondary small" data-edit="${c.id}">Corregir</button><button class="btn secondary small" data-delhoy="${c.id}">Eliminar</button></div></td>` : ""}
     </tr>`).join("")}</tbody>
   </table></div>`;
+  el.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => corregirComprobante(b.dataset.edit)));
+  el.querySelectorAll("[data-delhoy]").forEach((b) => b.addEventListener("click", async () => {
+    if (await eliminarComprobante(b.dataset.delhoy)) { listLoaded = false; render(); }
+  }));
 }
 
 function syncDraft() {
@@ -385,6 +394,32 @@ async function crearProveedor(nombre, cuit) {
   state.proveedores.push(data);
   state.proveedores.sort((a, b) => a.nombre.localeCompare(b.nombre));
   return data;
+}
+
+/** Abre el formulario con los datos de un comprobante para corregirlo (solo admin). */
+function corregirComprobante(id) {
+  const c = comprobantes.find((x) => x.id === id) || hoy.find((x) => x.id === id);
+  if (!c) return;
+  draft = {
+    grupo: c.grupo, sucursalId: c.sucursal_id, proveedorId: c.proveedor_id, fecha: c.fecha, numero: c.numero,
+    monto: montoTexto(c.monto) || "0", notas: c.notas || "",
+    tributos: Object.fromEntries(Object.entries(c.tributos || {}).map(([k, v]) => [k, montoTexto(v)])),
+  };
+  for (const k of ["iva21", "iva105", "iva27", "iva5", "iva25", "iibb"]) draft[k] = montoTexto(c[k]);
+  editId = id; showNewProv = false;
+  if (route !== "subir") location.hash = "subir"; else render();
+  window.scrollTo(0, 0);
+}
+
+async function eliminarComprobante(id) {
+  if (!confirm("¿Eliminar este comprobante?")) return false;
+  const { error } = await sb.from("comprobantes").delete().eq("id", id);
+  if (error) { toast(errorMsg(error)); return false; }
+  comprobantes = comprobantes.filter((c) => c.id !== id);
+  hoy = hoy.filter((c) => c.id !== id);
+  if (editId === id) { editId = null; draft = null; }
+  toast("Comprobante eliminado.");
+  return true;
 }
 
 async function guardarComprobante() {
@@ -410,18 +445,20 @@ async function guardarComprobante() {
     if (isNaN(n)) { toast("Revisá los montos de tributos y tasas."); return; }
     if (n > 0) trib[id] = n;
   }
-  if (Object.keys(trib).length) row.tributos = trib;   // solo si hay montos: no depende de la columna si no se usa
+  if (Object.keys(trib).length || editId) row.tributos = trib;   // al corregir se pisa siempre (permite borrar montos)
 
   saving = true; render();
-  // Sin .select(): el insert no depende de poder leer la fila
-  const { error } = await sb.from("comprobantes").insert(row);
+  // Sin .select(): no depende de poder leer la fila
+  const { error } = editId
+    ? await sb.from("comprobantes").update(row).eq("id", editId)
+    : await sb.from("comprobantes").insert(row);
   saving = false;
   if (error) { toast(errorMsg(error)); render(); return; }
   hoyLoaded = false;   // render() vuelve a traer el historial del día
   ultimoProveedorId = d.proveedorId;
 
-  draft = null; showNewProv = false; listLoaded = false;
-  toast("Comprobante guardado.");
+  toast(editId ? "Comprobante corregido." : "Comprobante guardado.");
+  draft = null; editId = null; showNewProv = false; listLoaded = false;
   render();
 }
 
@@ -656,7 +693,7 @@ function pageListado() {
       </div>
       <div style="display:flex; flex-direction:column; align-items:flex-end; gap:8px;">
         <div class="card-amount">${fmtMoney(c.monto)}</div>
-        ${esAdmin() ? `<button class="btn secondary small" data-del="${c.id}">Eliminar</button>` : ""}
+        ${esAdmin() ? `<div style="display:flex; gap:6px;"><button class="btn secondary small" data-edit="${c.id}">Corregir</button><button class="btn secondary small" data-del="${c.id}">Eliminar</button></div>` : ""}
       </div>
     </div>`;
   }).join("") : `<div class="empty-state panel"><span class="serif">Sin comprobantes</span>No hay comprobantes para este filtro.</div>`}
@@ -868,6 +905,7 @@ function wirePage() {
       toast("Proveedor agregado."); render();
     });
     on("btnGuardar", "click", guardarComprobante);
+    on("btnCancelarEdit", "click", () => { editId = null; draft = null; render(); });
     document.querySelectorAll("input.monto").forEach(wireMonto);
   }
 
@@ -891,12 +929,9 @@ function wirePage() {
     document.querySelectorAll("[data-cgran]").forEach((b) => b.addEventListener("click", () => { chartGran = b.dataset.cgran; render(); }));
     wireChartTip();
     document.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async () => {
-      if (!confirm("¿Eliminar este comprobante?")) return;
-      const { error } = await sb.from("comprobantes").delete().eq("id", b.dataset.del);
-      if (error) { toast(errorMsg(error)); return; }
-      comprobantes = comprobantes.filter((c) => c.id !== b.dataset.del);
-      toast("Comprobante eliminado."); render();
+      if (await eliminarComprobante(b.dataset.del)) render();
     }));
+    document.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => corregirComprobante(b.dataset.edit)));
     on("btnGenPDF", "click", () => {
       generarReportePDF({
         list: listaFiltrada(), desde, hasta,

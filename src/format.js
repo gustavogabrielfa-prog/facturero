@@ -132,3 +132,9 @@ export function formatMontoTexto(s) {
   ent = ent.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   return dec === null ? ent : ent + "," + dec;
 }
+
+/** Número guardado -> texto del campo ("1.234,56"); 0 o vacío -> "". */
+export function montoTexto(n) {
+  const v = Number(n);
+  return v ? v.toLocaleString("es-AR", { maximumFractionDigits: 2 }) : "";
+}
