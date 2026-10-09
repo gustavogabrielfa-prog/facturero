@@ -39,6 +39,9 @@ let hoy = [];
 let hoyLoaded = false;
 let hoyDia = todayISO();   // si cambia (pasó la medianoche), se vacía
 let provFilter = "todos";
+let busqueda = "";          // N° de comprobante a buscar (en todas las fechas)
+let busqResultados = null;  // null = buscando
+let busqSeq = 0, busqTimer = null;
 let chartGran = null;   // null = automático según el rango de fechas
 let chartData = null;   // columnas del gráfico, para el tooltip
 
@@ -92,6 +95,46 @@ async function loadComprobantes({ silent = false } = {}) {
       if (route === "listado") render();
     }
   }
+}
+
+async function buscarNumero() {
+  const t = busqueda.trim().replace(/[^\w-]/g, "");
+  const seq = ++busqSeq;
+  busqResultados = null; renderBusq();
+  if (!t) return;
+  const { data, error } = await sb.from("comprobantes").select("*")
+    .ilike("numero", `%${t}%`).order("fecha", { ascending: false }).limit(50);
+  if (seq !== busqSeq) return;
+  if (error) toast(errorMsg(error));
+  busqResultados = error ? [] : data;
+  renderBusq();
+}
+
+function busqHtml() {
+  if (!busqueda.trim()) return "";
+  if (busqResultados === null) return `<div class="busq-info">Buscando…</div>`;
+  const n = busqResultados.length;
+  return `<div class="busq-info">${n}${n === 50 ? "+" : ""} resultado${n === 1 ? "" : "s"} en todas las fechas · <button type="button" class="linkbtn" data-limpiar>Limpiar búsqueda</button></div>
+  ${n ? tablaComprobantes(busqResultados, { delAttr: "data-delbusq" })
+    : `<div class="empty-state panel"><span class="serif">Sin resultados</span>No hay comprobantes con ese número.</div>`}`;
+}
+
+/** Pinta resultados y oculta el historial normal mientras hay búsqueda. */
+function renderBusq() {
+  const el = document.getElementById("busqRes");
+  if (!el) return;
+  el.innerHTML = busqHtml();
+  const normal = document.getElementById("histNormal");
+  if (normal) normal.hidden = !!busqueda.trim();
+  el.querySelectorAll("[data-limpiar]").forEach((b) => b.addEventListener("click", () => {
+    busqueda = ""; busqResultados = null; busqSeq++;
+    const inp = document.getElementById("fBusq"); if (inp) inp.value = "";
+    renderBusq();
+  }));
+  el.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => corregirComprobante(b.dataset.edit)));
+  el.querySelectorAll("[data-delbusq]").forEach((b) => b.addEventListener("click", async () => {
+    if (await eliminarComprobante(b.dataset.delbusq)) render();
+  }));
 }
 
 /** Comprobantes cargados hoy por el usuario actual. RLS además los limita al día (hora Argentina). */
@@ -160,7 +203,7 @@ async function onSession(session) {
   if (!session) {
     unsubscribeRealtime();
     Object.assign(state, { perfil: null, sucursales: [], proveedores: [], booting: false, bootError: "" });
-    comprobantes = []; listLoaded = false; draft = null; editId = null; ultimoProveedorId = "";
+    comprobantes = []; listLoaded = false; draft = null; editId = null; ultimoProveedorId = ""; busqueda = ""; busqResultados = null;
     hoy = []; hoyLoaded = false; clearTimeout(medianocheTimer);
     render(); return;
   }
@@ -407,7 +450,7 @@ async function crearProveedor(nombre, cuit) {
 
 /** Abre el formulario con los datos de un comprobante para corregirlo (solo admin). */
 function corregirComprobante(id) {
-  const c = comprobantes.find((x) => x.id === id) || hoy.find((x) => x.id === id);
+  const c = comprobantes.find((x) => x.id === id) || hoy.find((x) => x.id === id) || busqResultados?.find((x) => x.id === id);
   if (!c) return;
   draft = {
     grupo: c.grupo, sucursalId: c.sucursal_id, proveedorId: c.proveedor_id, fecha: c.fecha, numero: c.numero,
@@ -426,6 +469,7 @@ async function eliminarComprobante(id) {
   if (error) { toast(errorMsg(error)); return false; }
   comprobantes = comprobantes.filter((c) => c.id !== id);
   hoy = hoy.filter((c) => c.id !== id);
+  if (busqResultados) busqResultados = busqResultados.filter((c) => c.id !== id);
   if (editId === id) { editId = null; draft = null; }
   toast("Comprobante eliminado.");
   return true;
@@ -663,6 +707,12 @@ function pageListado() {
     : `<div class="empty-state panel mb26">No hay comprobantes en este período.</div>`}
 
   <div class="section-label" style="border-top:none; padding-top:0;">Historial</div>
+  <div class="field busq" style="margin-bottom:12px;">
+    <label>Buscar por N° de comprobante</label>
+    <input type="search" id="fBusq" inputmode="search" autocomplete="off" placeholder="Ej: 031700020301" value="${esc(busqueda)}">
+  </div>
+  <div id="busqRes">${busqHtml()}</div>
+  <div id="histNormal" ${busqueda.trim() ? "hidden" : ""}>
   <div class="filters">
     <button data-filter="todos" class="${listFilter === "todos" ? "active" : ""}">Todos</button>
     <button data-filter="facturado" class="${listFilter === "facturado" ? "active" : ""}">Facturado</button>
@@ -690,6 +740,7 @@ function pageListado() {
     ? chartAporte(hist, { titulo: "Aporte por sucursal", campo: "sucursal_id", nombre: sucursalNombre, attr: "data-sfil" }) : ""}
   ${provFilter === "todos" ? chartAporte(hist, { titulo: "Aporte por proveedor", campo: "proveedor_id", nombre: proveedorNombre, attr: "data-pfil" }) : ""}` : ""}
   ${hist.length ? tablaComprobantes(hist) : `<div class="empty-state panel"><span class="serif">Sin comprobantes</span>No hay comprobantes para este filtro.</div>`}
+  </div>
   `}
 
   ${esAdmin() ? seccionTributos() : ""}
@@ -903,6 +954,12 @@ function wirePage() {
   }
 
   if (route === "listado") {
+    const busq = on("fBusq", "input", (e) => {
+      busqueda = e.target.value;
+      clearTimeout(busqTimer);
+      busqTimer = setTimeout(buscarNumero, 300);
+    });
+    renderBusq();
     document.querySelectorAll("[data-range]").forEach((b) => b.addEventListener("click", () => {
       const r = b.dataset.range;
       [desde, hasta] = r === "semana" ? weekRange() : r === "mes" ? monthRange() : yearRange();

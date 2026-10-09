@@ -204,3 +204,5 @@ button.prov-row:hover, button.prov-row:focus-visible{background:color-mix(in srg
 @media (max-width:480px){ .prov-row{grid-template-columns:minmax(0,1fr) auto;} .prov-bar{grid-column:1 / -1; grid-row:2;} }
 .hoy-acc{display:flex; gap:6px; justify-content:flex-end;}
 .hoy-acc .btn{padding:5px 9px; font-size:12px;}
+.busq-info{font-size:13px; color:var(--muted); margin:-4px 0 12px;}
+.linkbtn{background:none; border:0; padding:0; color:var(--ink); text-decoration:underline; font:inherit; cursor:pointer;}
