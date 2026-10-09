@@ -3,7 +3,7 @@ import { sb, configOk, fetchAll, errorMsg } from "./supabase.js";
 import {
   esc, fmtMoney, fmtDate, todayISO, weekRange, monthRange, yearRange,
   IMPUESTOS, computeTotals, groupBy, groupByPeriod, periodLabel,
-  periodKey, periodKeysBetween, periodShort, fmtCompact,
+  periodKey, periodKeysBetween, periodShort, fmtCompact, parseMonto, formatMontoTexto,
 } from "./format.js";
 import { generarReportePDF } from "./pdf.js";
 
@@ -286,7 +286,7 @@ function newDraft() {
 function pageSubir() {
   if (!draft) draft = newDraft();
   const d = draft;
-  const ivaField = (k, label) => `<div class="field"><label>${label}</label><input type="number" step="0.01" min="0" id="f_${k}" value="${esc(d[k])}" placeholder="0"></div>`;
+  const ivaField = (k, label) => `<div class="field"><label>${label}</label><input type="text" inputmode="decimal" autocomplete="off" class="monto" id="f_${k}" value="${esc(d[k])}" placeholder="0"></div>`;
   return `
   <div class="pagehead"><h1 class="serif">Subir comprobante</h1><p>Cargá los datos del comprobante — sin adjuntar archivos.</p></div>
 
@@ -326,7 +326,7 @@ function pageSubir() {
     <div class="field"><label>Fecha</label><input type="date" id="f_fecha" value="${esc(d.fecha)}"></div>
     <div class="field"><label>Número de comprobante *</label><input type="text" id="f_numero" value="${esc(d.numero)}" placeholder="0001-00012345"></div>
   </div>
-  <div class="field"><label>Monto total *</label><input type="number" step="0.01" min="0" id="f_monto" value="${esc(d.monto)}" placeholder="0"></div>
+  <div class="field"><label>Monto total *</label><input type="text" inputmode="decimal" autocomplete="off" class="monto" id="f_monto" value="${esc(d.monto)}" placeholder="0"></div>
 
   <div class="section-label">IVA por alícuota — dejá en 0 la que no aplique (ej. medicamento exento)</div>
   <div class="row2">${ivaField("iva21", "IVA 21%")}${ivaField("iva105", "IVA 10,5%")}</div>
@@ -335,7 +335,7 @@ function pageSubir() {
 
   <div class="section-label">Otros impuestos</div>
   ${ivaField("iibb", "Ingresos Brutos (Misiones)")}
-  ${tributosActivos().length ? `<div class="row2">${tributosActivos().map((t) => `<div class="field"><label>${esc(t.nombre)}</label><input type="number" step="0.01" min="0" data-trib="${t.id}" value="${esc(d.tributos?.[t.id] ?? "")}" placeholder="0"></div>`).join("")}</div>` : ""}
+  ${tributosActivos().length ? `<div class="row2">${tributosActivos().map((t) => `<div class="field"><label>${esc(t.nombre)}</label><input type="text" inputmode="decimal" autocomplete="off" class="monto" data-trib="${t.id}" value="${esc(d.tributos?.[t.id] ?? "")}" placeholder="0"></div>`).join("")}</div>` : ""}
 
   <div class="field"><label>Notas (opcional)</label><textarea id="f_notas">${esc(d.notas)}</textarea></div>
 
@@ -396,18 +396,21 @@ async function guardarComprobante() {
   if (!sucursalId) { toast("Elegí una sucursal."); return; }
   if (!d.proveedorId) { toast("Elegí o agregá un proveedor."); return; }
   if (!d.numero.trim()) { toast("El número de comprobante es obligatorio."); document.getElementById("f_numero")?.focus(); return; }
-  if (d.monto === "" || isNaN(Number(d.monto)) || Number(d.monto) < 0) { toast("Ingresá el monto total."); return; }
+  if (!d.monto.trim() || isNaN(parseMonto(d.monto))) { toast("Ingresá el monto total."); return; }
+  for (const k of ["iva21", "iva105", "iva27", "iva5", "iva25", "iibb"]) {
+    if (isNaN(parseMonto(d[k]))) { toast("Revisá los montos de IVA e impuestos."); return; }
+  }
 
   const row = {
     sucursal_id: sucursalId, proveedor_id: d.proveedorId, grupo: d.grupo, fecha: d.fecha,
-    numero: d.numero.trim(), monto: Number(d.monto), notas: d.notas.trim() || null,
+    numero: d.numero.trim(), monto: parseMonto(d.monto), notas: d.notas.trim() || null,
   };
-  for (const k of ["iva21", "iva105", "iva27", "iva5", "iva25", "iibb"]) row[k] = Number(d[k]) || 0;
+  for (const k of ["iva21", "iva105", "iva27", "iva5", "iva25", "iibb"]) row[k] = parseMonto(d[k]);
   const trib = {};
   for (const [id, v] of Object.entries(d.tributos || {})) {
-    if (v === "") continue;
-    if (isNaN(Number(v)) || Number(v) < 0) { toast("Revisá los montos de tributos y tasas."); return; }
-    if (Number(v) > 0) trib[id] = Number(v);
+    const n = parseMonto(v);
+    if (isNaN(n)) { toast("Revisá los montos de tributos y tasas."); return; }
+    if (n > 0) trib[id] = n;
   }
   if (Object.keys(trib).length) row.tributos = trib;   // solo si hay montos: no depende de la columna si no se usa
 
@@ -798,6 +801,23 @@ function wireChartTip() {
   panel.addEventListener("focusout", hide);
 }
 
+/** Campo de monto: puntos de miles y coma decimal mientras se escribe ("." del teclado numérico = coma). */
+function wireMonto(el) {
+  el.addEventListener("input", (e) => {
+    let v = el.value, pos = el.selectionStart ?? v.length;
+    if (e.data === "." && v[pos - 1] === ".") v = v.slice(0, pos - 1) + "," + v.slice(pos);
+    // pegado o autocompletado tipo "1234.56": el punto final es decimal (los de miles siempre llevan 3 dígitos)
+    else if (e.inputType?.startsWith("insert") && !v.includes(",") && /\.\d{1,2}$/.test(v)) v = v.replace(/\.(\d{1,2})$/, ",$1");
+    // cursor contado desde el final en dígitos y coma, que es lo que sobrevive al formateo
+    const sig = v.slice(pos).replace(/[^\d,]/g, "").length;
+    const out = formatMontoTexto(v);
+    el.value = out;
+    let p = out.length, n = 0;
+    while (p > 0 && n < sig) { p--; if (/[\d,]/.test(out[p])) n++; }
+    el.setSelectionRange(p, p);
+  });
+}
+
 function wirePage() {
   if (route === "subir") {
     document.querySelectorAll("#grupoToggle button").forEach((btn) =>
@@ -815,6 +835,7 @@ function wirePage() {
       toast("Proveedor agregado."); render();
     });
     on("btnGuardar", "click", guardarComprobante);
+    document.querySelectorAll("input.monto").forEach(wireMonto);
   }
 
   if (route === "listado") {

@@ -111,3 +111,24 @@ export function periodShort(key, gran, multiYear) {
 export function fmtCompact(n) {
   return "$ " + (Number(n) || 0).toLocaleString("es-AR", { notation: "compact", maximumFractionDigits: 1 });
 }
+
+/** "1.234,56" -> 1234.56 · "" -> 0 · texto inválido -> NaN */
+export function parseMonto(s) {
+  const t = String(s ?? "").trim();
+  if (!t) return 0;
+  if (!/^[\d.]*,?\d*$/.test(t)) return NaN;
+  return Number(t.replace(/\./g, "").replace(",", "."));
+}
+
+
+/** Normaliza lo tipeado: solo dígitos y una coma, 2 decimales, puntos de miles. */
+export function formatMontoTexto(s) {
+  s = s.replace(/[^\d,]/g, "");
+  const i = s.indexOf(",");
+  let ent = i < 0 ? s : s.slice(0, i);
+  const dec = i < 0 ? null : s.slice(i + 1).replace(/,/g, "").slice(0, 2);
+  ent = ent.replace(/^0+(?=\d)/, "");
+  if (dec !== null && !ent) ent = "0";
+  ent = ent.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return dec === null ? ent : ent + "," + dec;
+}
