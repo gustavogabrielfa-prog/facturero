@@ -640,7 +640,7 @@ function pageListado() {
     <span><i class="sw nofact"></i>No facturado <b>${fmtMoney(ht.noFact)}</b></span>
   </div>
   ${chartCompras(hist)}` : ""}
-  ${esAdmin() && sucursalFilter === "todas" && new Set(hist.map((c) => c.sucursal_id)).size > 1
+  ${esAdmin() && sucursalFilter === "todas" && provFilter === "todos" && new Set(hist.map((c) => c.sucursal_id)).size > 1
     ? chartAporte(hist, { titulo: "Aporte por sucursal", campo: "sucursal_id", nombre: sucursalNombre, attr: "data-sfil" }) : ""}
   ${provFilter === "todos" ? chartAporte(hist, { titulo: "Aporte por proveedor", campo: "proveedor_id", nombre: proveedorNombre, attr: "data-pfil" }) : ""}` : ""}
   ${hist.length ? hist.map((c) => {
