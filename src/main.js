@@ -19,6 +19,7 @@ const state = {
 };
 let route = location.hash.replace("#", "") || "subir";
 let draft = null;
+let ultimoProveedorId = "";   // queda elegido hasta que lo cambien o se cierre la app
 let showNewProv = false;
 let saving = false;
 let loginError = "";
@@ -158,7 +159,7 @@ async function onSession(session) {
   if (!session) {
     unsubscribeRealtime();
     Object.assign(state, { perfil: null, sucursales: [], proveedores: [], booting: false, bootError: "" });
-    comprobantes = []; listLoaded = false; draft = null;
+    comprobantes = []; listLoaded = false; draft = null; ultimoProveedorId = "";
     hoy = []; hoyLoaded = false; clearTimeout(medianocheTimer);
     render(); return;
   }
@@ -277,7 +278,7 @@ function newDraft() {
   return {
     grupo: "FACTURADO",
     sucursalId: state.perfil.sucursal_id || state.sucursales[0]?.id || "",
-    proveedorId: state.proveedores[0]?.id || "",
+    proveedorId: state.proveedores.some((p) => p.id === ultimoProveedorId) ? ultimoProveedorId : state.proveedores[0]?.id || "",
     fecha: todayISO(), numero: "", monto: "",
     iva21: "", iva105: "", iva27: "", iva5: "", iva25: "", iibb: "", notas: "", tributos: {},
   };
@@ -354,22 +355,19 @@ function renderHoy() {
     el.innerHTML = `<div class="empty-state panel" style="padding:26px 20px;">Todavía no cargaste comprobantes hoy.<br>Se reinicia todos los días a las 00:00.</div>`;
     return;
   }
-  const total = hoy.reduce((a, c) => a + (Number(c.monto) || 0), 0);
   const hora = (ts) => new Date(ts).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-  el.innerHTML = `
-    <div class="total-box mb16">
-      <span>Total del día<small class="total-sub">${hoy.length} comprobante${hoy.length === 1 ? "" : "s"} · se reinicia a las 00:00</small></span>
-      <span>${fmtMoney(total)}</span>
-    </div>
-    ${hoy.map((c) => `<div class="card">
-      <div class="card-icon">🧾</div>
-      <div class="card-body">
-        <div class="card-title">${esc(proveedorNombre(c.proveedor_id))}</div>
-        <div class="card-sub">${hora(c.created_at)} hs · N° ${esc(c.numero)} · Fecha ${fmtDate(c.fecha)}${esAdmin() ? " · " + esc(sucursalNombre(c.sucursal_id)) : ""}</div>
-        <div class="${c.grupo === "FACTURADO" ? "tag fact dot" : "tag nofact dot"}">${c.grupo === "FACTURADO" ? "Facturado" : "No facturado"}</div>
-      </div>
-      <div class="card-amount">${fmtMoney(c.monto)}</div>
-    </div>`).join("")}`;
+  const iva = (c) => IMPUESTOS.reduce((a, [k]) => a + (Number(c[k]) || 0), 0);
+  // Lista simple para revisar de un vistazo: total, IVA e IIBB de cada comprobante (sin suma del día)
+  el.innerHTML = `<div class="hoy-wrap"><table class="data-table hoy-table">
+    <thead><tr><th>Comprobante</th><th>Total</th><th>IVA</th><th>IIBB</th></tr></thead>
+    <tbody>${hoy.map((c) => `<tr>
+      <td><span class="${c.grupo === "FACTURADO" ? "fact" : "nofact"}" title="${c.grupo === "FACTURADO" ? "Facturado" : "No facturado"}">●</span> ${esc(proveedorNombre(c.proveedor_id))}
+        <small>${hora(c.created_at)} hs · N° ${esc(c.numero)} · ${fmtDate(c.fecha)}${esAdmin() ? " · " + esc(sucursalNombre(c.sucursal_id)) : ""}</small></td>
+      <td class="tot">${fmtMoney(c.monto)}</td>
+      <td>${fmtMoney(iva(c))}</td>
+      <td>${fmtMoney(c.iibb)}</td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
 }
 
 function syncDraft() {
@@ -420,6 +418,7 @@ async function guardarComprobante() {
   saving = false;
   if (error) { toast(errorMsg(error)); render(); return; }
   hoyLoaded = false;   // render() vuelve a traer el historial del día
+  ultimoProveedorId = d.proveedorId;
 
   draft = null; showNewProv = false; listLoaded = false;
   toast("Comprobante guardado.");
