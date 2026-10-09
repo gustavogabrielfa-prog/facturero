@@ -516,6 +516,37 @@ function chartCompras(list) {
   </div>`;
 }
 
+/** Aporte de cada proveedor al total (barras horizontales); los más chicos van a "Otros". */
+function chartProveedores(list) {
+  const TOP = 6;
+  const rows = groupBy(list, (c) => c.proveedor_id).map((g) => ({ ...g, tot: g.fact + g.noFact })).sort((a, b) => b.tot - a.tot);
+  const total = rows.reduce((a, g) => a + g.tot, 0);
+  if (!total) return "";
+  let shown = rows;
+  if (rows.length > TOP + 1) {
+    const resto = rows.slice(TOP);
+    shown = [...rows.slice(0, TOP), resto.reduce((o, g) => ({ ...o, fact: o.fact + g.fact, noFact: o.noFact + g.noFact, tot: o.tot + g.tot }),
+      { key: null, nombre: `Otros (${resto.length})`, fact: 0, noFact: 0, tot: 0 })];
+  }
+  const max = Math.max(...shown.map((g) => g.tot));
+  const pct = (v) => (v / max) * 100;
+  return `<div class="panel chart-panel mb26">
+    <div class="chart-head">
+      <div class="prov-title">Aporte por proveedor</div>
+      <div class="chart-legend"><span><i class="sw fact"></i>Facturado</span><span><i class="sw nofact"></i>No facturado</span></div>
+    </div>
+    ${shown.map((g) => {
+      const nombre = g.key ? proveedorNombre(g.key) : g.nombre;
+      return `<${g.key ? `button type="button" data-pfil="${g.key}" title="Ver solo ${esc(nombre)}"` : "div"} class="prov-row">
+        <span class="prov-name">${esc(nombre)}</span>
+        <span class="prov-bar"><i class="seg fact" style="width:${pct(g.fact)}%"></i><i class="seg nofact" style="width:${pct(g.noFact)}%"></i></span>
+        <span class="prov-amt"><b>${fmtMoney(g.tot)}</b> · ${Math.round((g.tot / total) * 100)}%</span>
+      </${g.key ? "button" : "div"}>`;
+    }).join("")}
+    <div class="prov-hint">Tocá un proveedor para ver solo el suyo.</div>
+  </div>`;
+}
+
 function pageListado() {
   const base = listaFiltrada();
   const t = computeTotals(base);
@@ -608,7 +639,8 @@ function pageListado() {
     <span><i class="sw fact"></i>Facturado <b>${fmtMoney(ht.fact)}</b></span>
     <span><i class="sw nofact"></i>No facturado <b>${fmtMoney(ht.noFact)}</b></span>
   </div>
-  ${chartCompras(hist)}` : ""}` : ""}
+  ${chartCompras(hist)}` : ""}
+  ${provFilter === "todos" ? chartProveedores(hist) : ""}` : ""}
   ${hist.length ? hist.map((c) => {
     const imp = ["iva21", "iva105", "iva27", "iva5", "iva25", "iibb"].reduce((a, k) => a + (Number(c[k]) || 0), 0) + sumTributos(c);
     return `<div class="card">
@@ -852,6 +884,7 @@ function wirePage() {
     document.querySelectorAll("[data-filter]").forEach((b) => b.addEventListener("click", () => { listFilter = b.dataset.filter; render(); }));
     document.querySelectorAll("[data-gran]").forEach((b) => b.addEventListener("click", () => { periodGranularity = b.dataset.gran; render(); }));
     on("fProv", "change", (e) => { provFilter = e.target.value; render(); });
+    document.querySelectorAll("[data-pfil]").forEach((b) => b.addEventListener("click", () => { provFilter = b.dataset.pfil; render(); }));
     document.querySelectorAll("[data-cgran]").forEach((b) => b.addEventListener("click", () => { chartGran = b.dataset.cgran; render(); }));
     wireChartTip();
     document.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async () => {
