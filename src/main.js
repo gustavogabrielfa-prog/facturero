@@ -516,10 +516,10 @@ function chartCompras(list) {
   </div>`;
 }
 
-/** Aporte de cada proveedor al total (barras horizontales); los más chicos van a "Otros". */
-function chartProveedores(list) {
+/** Aporte de cada proveedor / sucursal al total (barras horizontales); los más chicos van a "Otros". */
+function chartAporte(list, { titulo, campo, nombre, attr }) {
   const TOP = 6;
-  const rows = groupBy(list, (c) => c.proveedor_id).map((g) => ({ ...g, tot: g.fact + g.noFact })).sort((a, b) => b.tot - a.tot);
+  const rows = groupBy(list, (c) => c[campo]).map((g) => ({ ...g, tot: g.fact + g.noFact })).sort((a, b) => b.tot - a.tot);
   const total = rows.reduce((a, g) => a + g.tot, 0);
   if (!total) return "";
   let shown = rows;
@@ -532,18 +532,18 @@ function chartProveedores(list) {
   const pct = (v) => (v / max) * 100;
   return `<div class="panel chart-panel mb26">
     <div class="chart-head">
-      <div class="prov-title">Aporte por proveedor</div>
+      <div class="prov-title">${titulo}</div>
       <div class="chart-legend"><span><i class="sw fact"></i>Facturado</span><span><i class="sw nofact"></i>No facturado</span></div>
     </div>
     ${shown.map((g) => {
-      const nombre = g.key ? proveedorNombre(g.key) : g.nombre;
-      return `<${g.key ? `button type="button" data-pfil="${g.key}" title="Ver solo ${esc(nombre)}"` : "div"} class="prov-row">
-        <span class="prov-name">${esc(nombre)}</span>
+      const n = g.key ? nombre(g.key) : g.nombre;
+      return `<${g.key ? `button type="button" ${attr}="${g.key}" title="Ver solo ${esc(n)}"` : "div"} class="prov-row">
+        <span class="prov-name">${esc(n)}</span>
         <span class="prov-bar"><i class="seg fact" style="width:${pct(g.fact)}%"></i><i class="seg nofact" style="width:${pct(g.noFact)}%"></i></span>
         <span class="prov-amt"><b>${fmtMoney(g.tot)}</b> · ${Math.round((g.tot / total) * 100)}%</span>
       </${g.key ? "button" : "div"}>`;
     }).join("")}
-    <div class="prov-hint">Tocá un proveedor para ver solo el suyo.</div>
+    <div class="prov-hint">Tocá una fila para ver solo esa.</div>
   </div>`;
 }
 
@@ -640,7 +640,9 @@ function pageListado() {
     <span><i class="sw nofact"></i>No facturado <b>${fmtMoney(ht.noFact)}</b></span>
   </div>
   ${chartCompras(hist)}` : ""}
-  ${provFilter === "todos" ? chartProveedores(hist) : ""}` : ""}
+  ${esAdmin() && sucursalFilter === "todas" && new Set(hist.map((c) => c.sucursal_id)).size > 1
+    ? chartAporte(hist, { titulo: "Aporte por sucursal", campo: "sucursal_id", nombre: sucursalNombre, attr: "data-sfil" }) : ""}
+  ${provFilter === "todos" ? chartAporte(hist, { titulo: "Aporte por proveedor", campo: "proveedor_id", nombre: proveedorNombre, attr: "data-pfil" }) : ""}` : ""}
   ${hist.length ? hist.map((c) => {
     const imp = ["iva21", "iva105", "iva27", "iva5", "iva25", "iibb"].reduce((a, k) => a + (Number(c[k]) || 0), 0) + sumTributos(c);
     return `<div class="card">
@@ -884,6 +886,7 @@ function wirePage() {
     document.querySelectorAll("[data-filter]").forEach((b) => b.addEventListener("click", () => { listFilter = b.dataset.filter; render(); }));
     document.querySelectorAll("[data-gran]").forEach((b) => b.addEventListener("click", () => { periodGranularity = b.dataset.gran; render(); }));
     on("fProv", "change", (e) => { provFilter = e.target.value; render(); });
+    document.querySelectorAll("[data-sfil]").forEach((b) => b.addEventListener("click", () => { sucursalFilter = b.dataset.sfil; render(); }));
     document.querySelectorAll("[data-pfil]").forEach((b) => b.addEventListener("click", () => { provFilter = b.dataset.pfil; render(); }));
     document.querySelectorAll("[data-cgran]").forEach((b) => b.addEventListener("click", () => { chartGran = b.dataset.cgran; render(); }));
     wireChartTip();
