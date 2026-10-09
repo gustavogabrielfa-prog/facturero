@@ -351,6 +351,28 @@ function pageSubir() {
   `;
 }
 
+/** Lista simple de comprobantes (total, IVA, IIBB) para revisar de un vistazo; admin con Corregir / Eliminar. */
+function tablaComprobantes(list, { conHora = false, delAttr = "data-del" } = {}) {
+  const hora = (ts) => new Date(ts).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  const iva = (c) => IMPUESTOS.reduce((a, [k]) => a + (Number(c[k]) || 0), 0);
+  return `<div class="hoy-wrap"><table class="data-table hoy-table">
+    <thead><tr><th>Comprobante</th><th>Total</th><th>IVA</th><th>IIBB</th>${esAdmin() ? "<th></th>" : ""}</tr></thead>
+    <tbody>${list.map((c) => {
+      const trib = sumTributos(c);
+      const extra = [trib > 0 ? "Otros tributos " + fmtMoney(trib) : "", c.notas ? esc(c.notas) : ""].filter(Boolean).join(" · ");
+      return `<tr>
+      <td><span class="${c.grupo === "FACTURADO" ? "fact" : "nofact"}" title="${c.grupo === "FACTURADO" ? "Facturado" : "No facturado"}">●</span> ${esc(proveedorNombre(c.proveedor_id))}
+        <small>${conHora ? hora(c.created_at) + " hs · " : ""}N° ${esc(c.numero)} · ${fmtDate(c.fecha)}${esAdmin() ? " · " + esc(sucursalNombre(c.sucursal_id)) : ""}</small>
+        ${extra ? `<small>${extra}</small>` : ""}</td>
+      <td class="tot">${fmtMoney(c.monto)}</td>
+      <td>${fmtMoney(iva(c))}</td>
+      <td>${fmtMoney(c.iibb)}</td>
+      ${esAdmin() ? `<td><div class="hoy-acc"><button class="btn secondary small" data-edit="${c.id}">Corregir</button><button class="btn secondary small" ${delAttr}="${c.id}">Eliminar</button></div></td>` : ""}
+    </tr>`;
+    }).join("")}</tbody>
+  </table></div>`;
+}
+
 /** Pinta solo la lista del día, sin re-renderizar el formulario (no pisa lo que se está tipeando). */
 function renderHoy() {
   const el = document.getElementById("hoyList");
@@ -359,20 +381,7 @@ function renderHoy() {
     el.innerHTML = `<div class="empty-state panel" style="padding:26px 20px;">Todavía no cargaste comprobantes hoy.<br>Se reinicia todos los días a las 00:00.</div>`;
     return;
   }
-  const hora = (ts) => new Date(ts).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-  const iva = (c) => IMPUESTOS.reduce((a, [k]) => a + (Number(c[k]) || 0), 0);
-  // Lista simple para revisar de un vistazo: total, IVA e IIBB de cada comprobante (sin suma del día)
-  el.innerHTML = `<div class="hoy-wrap"><table class="data-table hoy-table">
-    <thead><tr><th>Comprobante</th><th>Total</th><th>IVA</th><th>IIBB</th>${esAdmin() ? "<th></th>" : ""}</tr></thead>
-    <tbody>${hoy.map((c) => `<tr>
-      <td><span class="${c.grupo === "FACTURADO" ? "fact" : "nofact"}" title="${c.grupo === "FACTURADO" ? "Facturado" : "No facturado"}">●</span> ${esc(proveedorNombre(c.proveedor_id))}
-        <small>${hora(c.created_at)} hs · N° ${esc(c.numero)} · ${fmtDate(c.fecha)}${esAdmin() ? " · " + esc(sucursalNombre(c.sucursal_id)) : ""}</small></td>
-      <td class="tot">${fmtMoney(c.monto)}</td>
-      <td>${fmtMoney(iva(c))}</td>
-      <td>${fmtMoney(c.iibb)}</td>
-      ${esAdmin() ? `<td><div class="hoy-acc"><button class="btn secondary small" data-edit="${c.id}">Corregir</button><button class="btn secondary small" data-delhoy="${c.id}">Eliminar</button></div></td>` : ""}
-    </tr>`).join("")}</tbody>
-  </table></div>`;
+  el.innerHTML = tablaComprobantes(hoy, { conHora: true, delAttr: "data-delhoy" });   // sin suma del día
   el.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => corregirComprobante(b.dataset.edit)));
   el.querySelectorAll("[data-delhoy]").forEach((b) => b.addEventListener("click", async () => {
     if (await eliminarComprobante(b.dataset.delhoy)) { listLoaded = false; render(); }
@@ -680,23 +689,7 @@ function pageListado() {
   ${esAdmin() && sucursalFilter === "todas" && provFilter === "todos" && new Set(hist.map((c) => c.sucursal_id)).size > 1
     ? chartAporte(hist, { titulo: "Aporte por sucursal", campo: "sucursal_id", nombre: sucursalNombre, attr: "data-sfil" }) : ""}
   ${provFilter === "todos" ? chartAporte(hist, { titulo: "Aporte por proveedor", campo: "proveedor_id", nombre: proveedorNombre, attr: "data-pfil" }) : ""}` : ""}
-  ${hist.length ? hist.map((c) => {
-    const imp = ["iva21", "iva105", "iva27", "iva5", "iva25", "iibb"].reduce((a, k) => a + (Number(c[k]) || 0), 0) + sumTributos(c);
-    return `<div class="card">
-      <div class="card-icon">🧾</div>
-      <div class="card-body">
-        <div class="card-title">${esc(proveedorNombre(c.proveedor_id))}</div>
-        <div class="card-sub">${fmtDate(c.fecha)} · N° ${esc(c.numero)} · ${esc(sucursalNombre(c.sucursal_id))}</div>
-        <div class="${c.grupo === "FACTURADO" ? "tag fact dot" : "tag nofact dot"}">${c.grupo === "FACTURADO" ? "Facturado" : "No facturado"}</div>
-        ${imp > 0 ? `<div class="card-sub" style="margin-top:4px;">Impuestos: ${fmtMoney(imp)}</div>` : ""}
-        ${c.notas ? `<div class="card-sub" style="margin-top:4px;">${esc(c.notas)}</div>` : ""}
-      </div>
-      <div style="display:flex; flex-direction:column; align-items:flex-end; gap:8px;">
-        <div class="card-amount">${fmtMoney(c.monto)}</div>
-        ${esAdmin() ? `<div style="display:flex; gap:6px;"><button class="btn secondary small" data-edit="${c.id}">Corregir</button><button class="btn secondary small" data-del="${c.id}">Eliminar</button></div>` : ""}
-      </div>
-    </div>`;
-  }).join("") : `<div class="empty-state panel"><span class="serif">Sin comprobantes</span>No hay comprobantes para este filtro.</div>`}
+  ${hist.length ? tablaComprobantes(hist) : `<div class="empty-state panel"><span class="serif">Sin comprobantes</span>No hay comprobantes para este filtro.</div>`}
   `}
 
   ${esAdmin() ? seccionTributos() : ""}
