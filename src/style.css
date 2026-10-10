@@ -211,3 +211,10 @@ button.prov-row:hover, button.prov-row:focus-visible{background:color-mix(in srg
 .dup-aviso.err{background:var(--danger-bg); color:var(--danger); border-color:var(--danger);}
 .dup-aviso.warn{background:var(--panel); color:var(--nofacturado); border-color:var(--nofacturado);}
 .muted-p{font-size:13px; color:var(--muted); margin:0 0 12px;}
+.tipo-toggle{margin-top:-10px;}
+.tipo-toggle button{padding:9px; font-size:13px;}
+.tipo-toggle button.active{background:var(--paper); color:var(--ink);}
+.tipo-toggle button.active.nc{background:var(--danger-bg); color:var(--danger);}
+.nc-aviso{margin:-8px 0 18px; padding:9px 12px; border-radius:5px; font-size:12.5px; background:var(--danger-bg); color:var(--danger); border:1px solid var(--danger);}
+.nc-tag{display:inline-block; font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:20px; background:var(--danger-bg); color:var(--danger); vertical-align:1px; margin-left:4px;}
+.hoy-table tr.nc-row td:not(:first-child){color:var(--danger);}

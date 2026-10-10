@@ -27,6 +27,9 @@ export function monthRange() {
 }
 export function yearRange() { const y = new Date().getFullYear(); return [`${y}-01-01`, `${y}-12-31`]; }
 
+/** Las notas de crédito se guardan en positivo y restan: 1 factura, -1 nota de crédito. */
+export const signo = (c) => (c.tipo === "NOTA_CREDITO" ? -1 : 1);
+
 export const IMPUESTOS = [
   ["iva21", "IVA 21%"], ["iva105", "IVA 10,5%"], ["iva27", "IVA 27%"], ["iva5", "IVA 5%"], ["iva25", "IVA 2,5%"],
 ];
@@ -34,12 +37,13 @@ export const IMPUESTOS = [
 export function computeTotals(list) {
   const t = { fact: 0, noFact: 0, iva21: 0, iva105: 0, iva27: 0, iva5: 0, iva25: 0, iibb: 0, tributos: {}, tributosTotal: 0 };
   for (const c of list) {
-    if (c.grupo === "FACTURADO") t.fact += Number(c.monto) || 0; else t.noFact += Number(c.monto) || 0;
-    for (const [k] of IMPUESTOS) t[k] += Number(c[k]) || 0;
-    t.iibb += Number(c.iibb) || 0;
+    const sg = signo(c);
+    if (c.grupo === "FACTURADO") t.fact += sg * (Number(c.monto) || 0); else t.noFact += sg * (Number(c.monto) || 0);
+    for (const [k] of IMPUESTOS) t[k] += sg * (Number(c[k]) || 0);
+    t.iibb += sg * (Number(c.iibb) || 0);
     for (const [id, v] of Object.entries(c.tributos || {})) {
-      t.tributos[id] = (t.tributos[id] || 0) + (Number(v) || 0);
-      t.tributosTotal += Number(v) || 0;
+      t.tributos[id] = (t.tributos[id] || 0) + sg * (Number(v) || 0);
+      t.tributosTotal += sg * (Number(v) || 0);
     }
   }
   t.ivaTotal = t.iva21 + t.iva105 + t.iva27 + t.iva5 + t.iva25;
@@ -78,7 +82,8 @@ export function groupBy(list, keyFn) {
   for (const c of list) {
     const k = keyFn(c);
     if (!map[k]) map[k] = { key: k, fact: 0, noFact: 0 };
-    if (c.grupo === "FACTURADO") map[k].fact += Number(c.monto) || 0; else map[k].noFact += Number(c.monto) || 0;
+    const m = signo(c) * (Number(c.monto) || 0);
+    if (c.grupo === "FACTURADO") map[k].fact += m; else map[k].noFact += m;
   }
   return Object.values(map);
 }

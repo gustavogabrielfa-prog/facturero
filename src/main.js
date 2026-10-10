@@ -3,7 +3,7 @@ import { sb, configOk, fetchAll, errorMsg } from "./supabase.js";
 import {
   esc, fmtMoney, fmtDate, todayISO, weekRange, monthRange, yearRange,
   IMPUESTOS, computeTotals, groupBy, groupByPeriod, periodLabel,
-  periodKey, periodKeysBetween, periodShort, fmtCompact, parseMonto, formatMontoTexto, montoTexto, numeroNorm,
+  periodKey, periodKeysBetween, periodShort, fmtCompact, parseMonto, formatMontoTexto, montoTexto, numeroNorm, signo,
 } from "./format.js";
 import { generarReportePDF } from "./pdf.js";
 
@@ -327,6 +327,7 @@ function newDraft() {
     grupo: "FACTURADO",
     sucursalId: state.perfil.sucursal_id || state.sucursales[0]?.id || "",
     proveedorId: state.proveedores.some((p) => p.id === ultimoProveedorId) ? ultimoProveedorId : state.proveedores[0]?.id || "",
+    tipo: "FACTURA", facturaRef: "",
     fecha: todayISO(), numero: "", monto: "",
     iva21: "", iva105: "", iva27: "", iva5: "", iva25: "", iibb: "", notas: "", tributos: {},
   };
@@ -345,6 +346,11 @@ function pageSubir() {
     <button data-grupo="FACTURADO" class="${d.grupo === "FACTURADO" ? "active fact" : ""}">Facturado</button>
     <button data-grupo="NO_FACTURADO" class="${d.grupo === "NO_FACTURADO" ? "active nofact" : ""}">No facturado</button>
   </div>
+  <div class="badge-group tipo-toggle" id="tipoToggle">
+    <button data-tipo="FACTURA" class="${d.tipo !== "NOTA_CREDITO" ? "active" : ""}">Factura</button>
+    <button data-tipo="NOTA_CREDITO" class="${d.tipo === "NOTA_CREDITO" ? "active nc" : ""}">Nota de crédito</button>
+  </div>
+  ${d.tipo === "NOTA_CREDITO" ? `<div class="nc-aviso">Nota de crédito: cargá los importes en positivo, la app los <b>resta</b> de los totales.</div>` : ""}
 
   ${esAdmin() ? `<div class="field"><label>Sucursal</label>
     <select id="f_sucursal">${state.sucursales.map((s) => `<option value="${s.id}" ${d.sucursalId === s.id ? "selected" : ""}>${esc(s.nombre)}</option>`).join("")}</select>
@@ -377,6 +383,7 @@ function pageSubir() {
     <div class="field"><label>Fecha</label><input type="date" id="f_fecha" value="${esc(d.fecha)}"></div>
     <div class="field"><label>Número de comprobante *</label><input type="text" id="f_numero" value="${esc(d.numero)}" placeholder="0001-00012345"><div id="dupAviso"></div></div>
   </div>
+  ${d.tipo === "NOTA_CREDITO" ? `<div class="field"><label>Factura que afecta (opcional)</label><input type="text" id="f_facturaRef" value="${esc(d.facturaRef)}" placeholder="0001-00012345"></div>` : ""}
   <div class="field"><label>Monto total *</label><input type="text" inputmode="decimal" autocomplete="off" class="monto" id="f_monto" value="${esc(d.monto)}" placeholder="0"></div>
 
   <div class="section-label">IVA por alícuota — dejá en 0 la que no aplique (ej. medicamento exento)</div>
@@ -402,18 +409,20 @@ function pageSubir() {
 function tablaComprobantes(list, { conHora = false, delAttr = "data-del" } = {}) {
   const hora = (ts) => new Date(ts).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   const iva = (c) => IMPUESTOS.reduce((a, [k]) => a + (Number(c[k]) || 0), 0);
+  const $ = (c, v) => fmtMoney(signo(c) * (Number(v) || 0));
   return `<div class="hoy-wrap"><table class="data-table hoy-table">
     <thead><tr><th>Comprobante</th><th>Total</th><th>IVA</th><th>IIBB</th>${esAdmin() ? "<th></th>" : ""}</tr></thead>
     <tbody>${list.map((c) => {
       const trib = sumTributos(c);
-      const extra = [trib > 0 ? "Otros tributos " + fmtMoney(trib) : "", c.notas ? esc(c.notas) : ""].filter(Boolean).join(" · ");
-      return `<tr>
-      <td><span class="${c.grupo === "FACTURADO" ? "fact" : "nofact"}" title="${c.grupo === "FACTURADO" ? "Facturado" : "No facturado"}">●</span> ${esc(proveedorNombre(c.proveedor_id))}
+      const nc = c.tipo === "NOTA_CREDITO";
+      const extra = [nc && c.factura_ref ? "Afecta a N° " + esc(c.factura_ref) : "", trib > 0 ? "Otros tributos " + $(c, trib) : "", c.notas ? esc(c.notas) : ""].filter(Boolean).join(" · ");
+      return `<tr${nc ? ` class="nc-row"` : ""}>
+      <td><span class="${c.grupo === "FACTURADO" ? "fact" : "nofact"}" title="${c.grupo === "FACTURADO" ? "Facturado" : "No facturado"}">●</span> ${esc(proveedorNombre(c.proveedor_id))}${nc ? ` <span class="nc-tag">Nota de crédito</span>` : ""}
         <small>${conHora ? hora(c.created_at) + " hs · " : ""}N° ${esc(c.numero)} · ${fmtDate(c.fecha)}${esAdmin() ? " · " + esc(sucursalNombre(c.sucursal_id)) : ""}</small>
         ${extra ? `<small>${extra}</small>` : ""}</td>
-      <td class="tot">${fmtMoney(c.monto)}</td>
-      <td>${fmtMoney(iva(c))}</td>
-      <td>${fmtMoney(c.iibb)}</td>
+      <td class="tot">${$(c, c.monto)}</td>
+      <td>${$(c, iva(c))}</td>
+      <td>${$(c, c.iibb)}</td>
       ${esAdmin() ? `<td><div class="hoy-acc"><button class="btn secondary small" data-edit="${c.id}">Corregir</button><button class="btn secondary small" ${delAttr}="${c.id}">Eliminar</button></div></td>` : ""}
     </tr>`;
     }).join("")}</tbody>
@@ -438,7 +447,7 @@ function renderHoy() {
 function syncDraft() {
   if (route !== "subir" || !draft) return;
   const val = (id) => document.getElementById(id)?.value;
-  const map = { sucursalId: "f_sucursal", proveedorId: "f_proveedor", fecha: "f_fecha", numero: "f_numero", monto: "f_monto", notas: "f_notas" };
+  const map = { sucursalId: "f_sucursal", proveedorId: "f_proveedor", fecha: "f_fecha", numero: "f_numero", monto: "f_monto", notas: "f_notas", facturaRef: "f_facturaRef" };
   for (const [k, id] of Object.entries(map)) { const v = val(id); if (v !== undefined) draft[k] = v; }
   for (const k of ["iva21", "iva105", "iva27", "iva5", "iva25", "iibb"]) { const v = val("f_" + k); if (v !== undefined) draft[k] = v; }
   document.querySelectorAll("[data-trib]").forEach((el) => { draft.tributos[el.dataset.trib] = el.value; });
@@ -467,7 +476,8 @@ async function verificarDuplicado() {
   const rows = await mismosNumero(draft.proveedorId, draft.numero);
   if (seq !== dupSeq || !document.getElementById("dupAviso")) return;
   const fila = (c) => `${fmtDate(c.fecha)} · N° ${esc(c.numero)} · ${fmtMoney(c.monto)} · ${esc(c.sucursal || "")} · ${c.grupo === "FACTURADO" ? "Facturado" : "No facturado"}`;
-  const mismo = rows.filter((c) => c.grupo === draft.grupo), otro = rows.filter((c) => c.grupo !== draft.grupo);
+  const delTipo = rows.filter((c) => (c.tipo || "FACTURA") === (draft.tipo || "FACTURA"));
+  const mismo = delTipo.filter((c) => c.grupo === draft.grupo), otro = delTipo.filter((c) => c.grupo !== draft.grupo);
   document.getElementById("dupAviso").innerHTML =
     (mismo.length ? `<div class="dup-aviso err"><b>Ya está cargado</b> — no se puede guardar otra vez:${mismo.map((c) => `<div>${fila(c)}</div>`).join("")}</div>` : "")
     + (otro.length ? `<div class="dup-aviso warn"><b>Ojo:</b> ese número ya existe como ${otro[0].grupo === "FACTURADO" ? "Facturado" : "No facturado"}. Revisá que no sea el mismo:${otro.map((c) => `<div>${fila(c)}</div>`).join("")}</div>` : "");
@@ -479,7 +489,7 @@ async function buscarDuplicados() {
   try {
     const rows = await fetchAll(() => sb.from("comprobantes").select("*").order("fecha", { ascending: false }));
     const g = {};
-    for (const c of rows) (g[c.proveedor_id + "|" + numeroNorm(c.numero)] ||= []).push(c);
+    for (const c of rows) (g[c.proveedor_id + "|" + (c.tipo || "FACTURA") + "|" + numeroNorm(c.numero)] ||= []).push(c);
     dupGrupos = Object.values(g).filter((x) => x.length > 1);
   } catch (e) { toast(errorMsg(e)); }
   dupBuscando = false;
@@ -501,7 +511,7 @@ function corregirComprobante(id) {
     || dupGrupos?.flat().find((x) => x.id === id);
   if (!c) return;
   draft = {
-    grupo: c.grupo, sucursalId: c.sucursal_id, proveedorId: c.proveedor_id, fecha: c.fecha, numero: c.numero,
+    grupo: c.grupo, tipo: c.tipo || "FACTURA", facturaRef: c.factura_ref || "", sucursalId: c.sucursal_id, proveedorId: c.proveedor_id, fecha: c.fecha, numero: c.numero,
     monto: montoTexto(c.monto) || "0", notas: c.notas || "",
     tributos: Object.fromEntries(Object.entries(c.tributos || {}).map(([k, v]) => [k, montoTexto(v)])),
   };
@@ -531,7 +541,7 @@ async function guardarComprobante() {
   if (!sucursalId) { toast("Elegí una sucursal."); return; }
   if (!d.proveedorId) { toast("Elegí o agregá un proveedor."); return; }
   if (!d.numero.trim()) { toast("El número de comprobante es obligatorio."); document.getElementById("f_numero")?.focus(); return; }
-  if ((await mismosNumero(d.proveedorId, d.numero)).some((c) => c.grupo === d.grupo)) {
+  if ((await mismosNumero(d.proveedorId, d.numero)).some((c) => c.grupo === d.grupo && (c.tipo || "FACTURA") === (d.tipo || "FACTURA"))) {
     toast("Ese comprobante ya está cargado (mismo proveedor y número)."); verificarDuplicado(); return;
   }
   if (!d.monto.trim() || isNaN(parseMonto(d.monto))) { toast("Ingresá el monto total."); return; }
@@ -542,6 +552,7 @@ async function guardarComprobante() {
   const row = {
     sucursal_id: sucursalId, proveedor_id: d.proveedorId, grupo: d.grupo, fecha: d.fecha,
     numero: d.numero.trim(), monto: parseMonto(d.monto), notas: d.notas.trim() || null,
+    tipo: d.tipo || "FACTURA", factura_ref: d.tipo === "NOTA_CREDITO" ? (d.facturaRef || "").trim() || null : null,
   };
   for (const k of ["iva21", "iva105", "iva27", "iva5", "iva25", "iibb"]) row[k] = parseMonto(d[k]);
   const trib = {};
@@ -610,7 +621,8 @@ function chartCompras(list) {
   const gran = chartGran || autoGran();
   const keys = periodKeysBetween(desde, hasta, gran);
   const byKey = Object.fromEntries(groupBy(list, (c) => periodKey(c.fecha, gran)).map((r) => [r.key, r]));
-  const cols = keys.map((k) => ({ key: k, fact: byKey[k]?.fact || 0, noFact: byKey[k]?.noFact || 0 }));
+  // las notas de crédito restan; un período con más crédito que compras queda en 0 en el gráfico
+  const cols = keys.map((k) => ({ key: k, fact: Math.max(0, byKey[k]?.fact || 0), noFact: Math.max(0, byKey[k]?.noFact || 0) }));
   chartData = { cols, gran };
 
   const max = Math.max(0, ...cols.map((c) => c.fact + c.noFact));
@@ -661,7 +673,7 @@ function chartCompras(list) {
 /** Aporte de cada proveedor / sucursal al total (barras horizontales); los más chicos van a "Otros". */
 function chartAporte(list, { titulo, campo, nombre, attr }) {
   const TOP = 6;
-  const rows = groupBy(list, (c) => c[campo]).map((g) => ({ ...g, tot: g.fact + g.noFact })).sort((a, b) => b.tot - a.tot);
+  const rows = groupBy(list, (c) => c[campo]).map((g) => ({ ...g, fact: Math.max(0, g.fact), noFact: Math.max(0, g.noFact) })).map((g) => ({ ...g, tot: g.fact + g.noFact })).sort((a, b) => b.tot - a.tot);
   const total = rows.reduce((a, g) => a + g.tot, 0);
   if (!total) return "";
   let shown = rows;
@@ -990,6 +1002,8 @@ function wirePage() {
   if (route === "subir") {
     document.querySelectorAll("#grupoToggle button").forEach((btn) =>
       btn.addEventListener("click", () => { syncDraft(); draft.grupo = btn.dataset.grupo; render(); }));
+    document.querySelectorAll("#tipoToggle button").forEach((btn) =>
+      btn.addEventListener("click", () => { syncDraft(); draft.tipo = btn.dataset.tipo; render(); }));
     on("btnNuevoProv", "click", () => { syncDraft(); showNewProv = !showNewProv; render(); if (showNewProv) document.getElementById("np_nombre")?.focus(); });
     on("btnCancelarProv", "click", () => { syncDraft(); showNewProv = false; render(); });
     on("btnGuardarProv", "click", async () => {

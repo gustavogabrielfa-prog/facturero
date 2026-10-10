@@ -1,5 +1,5 @@
 import { jsPDF } from "jspdf";
-import { fmtMoney, fmtDate, computeTotals, groupBy, IMPUESTOS } from "./format.js";
+import { fmtMoney, fmtDate, computeTotals, groupBy, IMPUESTOS, signo } from "./format.js";
 
 /**
  * Genera y descarga el reporte PDF de compras.
@@ -45,7 +45,7 @@ export function generarReportePDF({ list, desde, hasta, alcance, proveedorNombre
   doc.setFontSize(9);
   if (!list.length) line("Sin comprobantes en este período.");
   list.slice().sort((a, b) => a.fecha.localeCompare(b.fecha)).forEach((c) => {
-    line(`${fmtDate(c.fecha)} · ${c.grupo === "FACTURADO" ? "Fact." : "No fact."} · N° ${c.numero} · ${proveedorNombre(c.proveedor_id)} · ${sucursalNombre(c.sucursal_id)} — ${fmtMoney(c.monto)}`, 4.6);
+    line(`${fmtDate(c.fecha)} · ${c.grupo === "FACTURADO" ? "Fact." : "No fact."}${c.tipo === "NOTA_CREDITO" ? " · Nota de crédito" : ""} · N° ${c.numero} · ${proveedorNombre(c.proveedor_id)} · ${sucursalNombre(c.sucursal_id)} — ${fmtMoney(signo(c) * c.monto)}`, 4.6);
   });
 
   doc.save(`facturero_reporte_${desde}_a_${hasta}.pdf`);
