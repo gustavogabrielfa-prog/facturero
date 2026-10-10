@@ -5,7 +5,8 @@ import {
   IMPUESTOS, computeTotals, groupBy, groupByPeriod, periodLabel,
   periodKey, periodKeysBetween, periodShort, fmtCompact, parseMonto, formatMontoTexto, montoTexto, numeroNorm, signo,
 } from "./format.js";
-import { generarReportePDF } from "./pdf.js";
+import { generarReportePDF, generarInformeArca } from "./pdf.js";
+import { leerArchivoArca, compararArca, rangoArca } from "./arca.js";
 
 /* ---------- STATE ---------- */
 const state = {
@@ -45,6 +46,10 @@ let busqSeq = 0, busqTimer = null;
 let dupSeq = 0, dupTimer = null;
 let dupGrupos = null;       // revisión de duplicados ya cargados (admin): null = sin revisar
 let dupBuscando = false;
+
+// Control con ARCA (admin): filas del archivo, resultado y comprobantes usados en la comparación
+let arcaFilas = null, arcaArchivo = "", arcaRes = null, arcaComps = [], arcaCargando = false, arcaError = "";
+let provNuevoPendiente = null;   // { nombre, cuit } para precargar "+ Nuevo" al cargar desde ARCA
 let chartGran = null;   // null = automático según el rango de fechas
 let chartData = null;   // columnas del gráfico, para el tooltip
 
@@ -130,7 +135,7 @@ function renderBusq() {
   const normal = document.getElementById("histNormal");
   if (normal) normal.hidden = !!busqueda.trim();
   el.querySelectorAll("[data-limpiar]").forEach((b) => b.addEventListener("click", () => {
-    busqueda = ""; busqResultados = null; busqSeq++;
+    busqueda = ""; busqResultados = null; arcaFilas = null; arcaRes = null; arcaComps = []; busqSeq++;
     const inp = document.getElementById("fBusq"); if (inp) inp.value = "";
     renderBusq();
     on("btnDuplicados", "click", buscarDuplicados);
@@ -207,7 +212,7 @@ async function onSession(session) {
   if (!session) {
     unsubscribeRealtime();
     Object.assign(state, { perfil: null, sucursales: [], proveedores: [], booting: false, bootError: "" });
-    comprobantes = []; listLoaded = false; draft = null; editId = null; ultimoProveedorId = ""; busqueda = ""; busqResultados = null;
+    comprobantes = []; listLoaded = false; draft = null; editId = null; ultimoProveedorId = ""; busqueda = ""; busqResultados = null; arcaFilas = null; arcaRes = null; arcaComps = [];
     hoy = []; hoyLoaded = false; clearTimeout(medianocheTimer);
     render(); return;
   }
@@ -233,8 +238,10 @@ function render() {
   }
 
   if (route === "listado" && !veListado()) route = "subir";
+  if (route === "arca" && !esAdmin()) route = "subir";
   let body;
   if (route === "listado") body = pageListado();
+  else if (route === "arca") body = pageArca();
   else if (route === "proveedores") body = pageProveedores();
   else { route = "subir"; body = pageSubir(); }
 
@@ -256,7 +263,7 @@ function shell(bodyHtml, logged, tabs = false) {
       : sucursalNombre(state.perfil.sucursal_id)
     : "";
   return `
-  <div class="wrap${logged && (route === "listado" || route === "subir" || route === "proveedores") ? " ancho ruta-" + route : ""}">
+  <div class="wrap${logged && (route === "listado" || route === "subir" || route === "proveedores" || route === "arca") ? " ancho ruta-" + route : ""}">
     <div class="pivote">
     <header class="top">
       <div class="brand"><div class="brand-mark">F</div><div class="brand-name">Facturero</div></div>
@@ -269,6 +276,7 @@ function shell(bodyHtml, logged, tabs = false) {
       <button data-route="subir" class="${route === "subir" ? "active" : ""}">＋ Subir</button>
       <button data-route="proveedores" class="${route === "proveedores" ? "active" : ""}">🏷 Proveedores</button>
       ${veListado() ? `<button data-route="listado" class="${route === "listado" ? "active" : ""}">🗂 Listado</button>` : ""}
+      ${esAdmin() ? `<button data-route="arca" class="${route === "arca" ? "active" : ""}">🧾 ARCA</button>` : ""}
     </div>` : ""}
     </div>
     ${bodyHtml}
@@ -561,7 +569,8 @@ function seccionDuplicados() {
 /** Abre el formulario con los datos de un comprobante para corregirlo (solo admin). */
 function corregirComprobante(id) {
   const c = comprobantes.find((x) => x.id === id) || hoy.find((x) => x.id === id) || busqResultados?.find((x) => x.id === id)
-    || dupGrupos?.flat().find((x) => x.id === id);
+    || dupGrupos?.flat().find((x) => x.id === id)
+    || arcaComps.find((x) => x.id === id);
   if (!c) return;
   draft = {
     grupo: c.grupo, tipo: c.tipo || "FACTURA", facturaRef: c.factura_ref || "", sucursalId: c.sucursal_id, proveedorId: c.proveedor_id, fecha: c.fecha, numero: c.numero,
@@ -980,6 +989,133 @@ async function importarBackup(file) {
 }
 
 /* ---------- PROVEEDORES ---------- */
+/* ---------- ARCA (admin) ---------- */
+async function compararConArca() {
+  if (!arcaFilas) return;
+  arcaCargando = true; arcaError = ""; render();
+  try {
+    const [d, h] = rangoArca(arcaFilas);
+    const mas = (iso, n) => { const x = new Date(iso + "T00:00:00"); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
+    // ±15 días: la fecha cargada puede ser la de recepción y no la de emisión
+    arcaComps = await fetchAll(() => sb.from("comprobantes").select("*").gte("fecha", mas(d, -15)).lte("fecha", mas(h, 15)).order("fecha"));
+    arcaRes = compararArca(arcaFilas, arcaComps, state.proveedores);
+  } catch (e) { arcaError = errorMsg(e) || String(e.message || e); }
+  arcaCargando = false;
+  if (route === "arca") render();
+}
+
+/** Abre Subir con los datos de un comprobante de ARCA que falta cargar. */
+function cargarDesdeArca(i) {
+  const a = arcaRes?.falta[i]?.a;
+  if (!a) return;
+  const prov = state.proveedores.find((p) => (p.cuit || "").replace(/\D/g, "") === a.cuit);
+  editId = null;
+  draft = { ...newDraft(), grupo: "FACTURADO", tipo: a.nc ? "NOTA_CREDITO" : "FACTURA", fecha: a.fecha,
+    numero: `${a.pv.padStart(5, "0")}-${a.num.padStart(8, "0")}`, monto: montoTexto(a.total) };
+  if (prov) { draft.proveedorId = prov.id; showNewProv = false; provNuevoPendiente = null; }
+  else { showNewProv = true; provNuevoPendiente = { nombre: a.nombre, cuit: a.cuit }; }
+  location.hash = "subir";
+  toast(prov ? "Completá el IVA y el IIBB y guardá." : "Primero guardá el proveedor nuevo, después completá el IVA y el IIBB.");
+}
+
+function descargarCsvArca() {
+  const res = arcaRes; if (!res) return;
+  const n = (v) => (v === null || v === undefined || v === "" ? "" : Number(v).toFixed(2).replace(".", ","));
+  const filas = [["Resultado", "Fecha", "Tipo", "CUIT", "Proveedor", "Número ARCA", "Número Facturero", "Total ARCA", "Total Facturero", "Diferencia", "Sucursal", "Detalle"]];
+  const nA = (a) => `${a.pv.padStart(5, "0")}-${a.num.padStart(8, "0")}`;
+  for (const { a, c, detalle } of res.dif) filas.push(["Diferencia de importe", a.fecha, a.tipoTexto, a.cuit, a.nombre || proveedorNombre(c.proveedor_id), nA(a), c.numero, n(a.total), n(c.monto), n(Number(c.monto) - a.total), sucursalNombre(c.sucursal_id), detalle.join(" · ")]);
+  for (const { a, c, detalle } of res.revisar) filas.push(["Número distinto", a.fecha, a.tipoTexto, a.cuit, a.nombre || proveedorNombre(c.proveedor_id), nA(a), c.numero, n(a.total), n(c.monto), n(Number(c.monto) - a.total), sucursalNombre(c.sucursal_id), detalle.join(" · ")]);
+  for (const { a } of res.falta) filas.push(["Falta cargar", a.fecha, a.tipoTexto, a.cuit, a.nombre, nA(a), "", n(a.total), "", n(-a.total), "", ""]);
+  for (const { c } of res.noArca) filas.push(["No está en ARCA", c.fecha, c.tipo === "NOTA_CREDITO" ? "Nota de crédito" : "Factura", (state.proveedores.find((p) => p.id === c.proveedor_id)?.cuit || ""), proveedorNombre(c.proveedor_id), "", c.numero, "", n(c.monto), n(c.monto), sucursalNombre(c.sucursal_id), ""]);
+  for (const { a, c } of res.ok) filas.push(["Coincide", a.fecha, a.tipoTexto, a.cuit, a.nombre || proveedorNombre(c.proveedor_id), nA(a), c.numero, n(a.total), n(c.monto), "0,00", sucursalNombre(c.sucursal_id), ""]);
+  const csv = "\ufeff" + filas.map((f) => f.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(";")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const link = Object.assign(document.createElement("a"), { href: url, download: `facturero_control_arca_${res.desde}_a_${res.hasta}.csv` });
+  document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+}
+
+function tablaArca(items, tipo) {
+  const nA = (a) => `${a.pv.padStart(5, "0")}-${a.num.padStart(8, "0")}`;
+  const tipoTxt = (nc) => (nc ? ` <span class="nc-tag">Nota de crédito</span>` : "");
+  if (!items.length) return `<div class="arca-vacio">Sin casos.</div>`;
+  return `<div class="hoy-wrap"><table class="data-table arca-tabla">
+    <thead><tr><th>Proveedor</th><th>Fecha</th><th>N° ARCA</th><th>N° Facturero</th><th>Total ARCA</th><th>Total Facturero</th><th>Diferencia</th><th></th></tr></thead>
+    <tbody>${items.map((it, i) => {
+      const { a, c } = it;
+      const prov = a ? (a.nombre || proveedorNombre(c?.proveedor_id)) : proveedorNombre(c.proveedor_id);
+      const totA = a ? a.total : null, totF = c ? Number(c.monto) : null;
+      const dif = totA !== null && totF !== null ? totF - totA : totA !== null ? -totA : totF;
+      return `<tr>
+        <td>${esc(prov)}${tipoTxt(a ? a.nc : c.tipo === "NOTA_CREDITO")}
+          <small>${c ? esc(sucursalNombre(c.sucursal_id)) : "CUIT " + esc(a.cuit)}${it.detalle?.length ? " · " + esc(it.detalle.join(" · ")) : ""}</small></td>
+        <td>${fmtDate(a ? a.fecha : c.fecha)}</td>
+        <td>${a ? nA(a) : "—"}</td>
+        <td>${c ? esc(c.numero) : "—"}</td>
+        <td>${totA !== null ? fmtMoney(totA) : "—"}</td>
+        <td>${totF !== null ? fmtMoney(totF) : "—"}</td>
+        <td class="${Math.abs(dif) > 1 ? "arca-dif" : ""}">${fmtMoney(dif)}</td>
+        <td>${tipo === "falta" ? `<button class="btn small" data-arcacargar="${i}">Cargar</button>`
+          : tipo === "ok" ? "" : `<button class="btn secondary small" data-edit="${c.id}">Corregir</button>`}</td>
+      </tr>`;
+    }).join("")}</tbody></table></div>`;
+}
+
+function pageArca() {
+  const res = arcaRes;
+  const tarjeta = (n, label, cls) => `<div class="arca-kpi ${cls}"><div class="arca-kpi-n">${n}</div><div class="arca-kpi-l">${label}</div></div>`;
+  return `
+  <div class="pagehead"><h1 class="serif">Control con ARCA</h1><p>Compará lo cargado en Facturero con las facturas que ARCA tiene registradas a nombre de la farmacia.</p></div>
+
+  <div class="trip trip2">
+  <section class="trip-col">
+  <div class="trip-h">1 · Archivo de ARCA</div>
+  <div class="panel mb16" style="padding:16px;">
+    <ol class="arca-pasos">
+      <li>Entrá a <b>ARCA</b> con la clave fiscal y abrí <b>Mis Comprobantes → Recibidos</b>.</li>
+      <li>Elegí el período (por ejemplo, el mes) y tocá <b>Exportar</b> (CSV o Excel).</li>
+      <li>Subí ese archivo acá. Se compara en tu navegador: el archivo no se guarda.</li>
+    </ol>
+    <input type="file" id="arcaFile" accept=".csv,.txt,.xlsx,.xls" style="display:none;">
+    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+      <button class="btn small" id="btnArcaFile">📤 Subir archivo de ARCA</button>
+      ${arcaFilas ? `<button class="btn secondary small" id="btnArcaRecomparar" ${arcaCargando ? "disabled" : ""}>↻ Volver a comparar</button>` : ""}
+    </div>
+    ${arcaArchivo ? `<div class="hint" style="margin-top:10px;">Archivo: <b>${esc(arcaArchivo)}</b> · ${arcaFilas.length} comprobantes${res ? ` · del ${fmtDate(res.desde)} al ${fmtDate(res.hasta)}` : ""}</div>` : ""}
+    ${arcaError ? `<div class="dup-aviso err" style="margin-top:10px;">${esc(arcaError)}</div>` : ""}
+  </div>
+  <div class="hint">Se comparan solo los comprobantes <b>Facturados</b> (lo no facturado no figura en ARCA), de todas las sucursales, por CUIT del proveedor + punto de venta + número. Diferencias de hasta $ 1 se toman como redondeo.</div>
+  </section>
+
+  <section class="trip-col">
+  <div class="trip-h">2 · Resultado</div>
+  ${arcaCargando ? `<div class="loading">Comparando…</div>` : !res ? `<div class="empty-state panel">Subí el archivo de ARCA para ver la comparación.</div>` : `
+  <div class="arca-kpis">
+    ${tarjeta(res.ok.length, "Coinciden", "ok")}
+    ${tarjeta(res.dif.length, "Diferencia de importe", "warn")}
+    ${tarjeta(res.revisar.length, "Número distinto", "warn")}
+    ${tarjeta(res.falta.length, "Faltan cargar", "err")}
+    ${tarjeta(res.noArca.length, "No están en ARCA", "err")}
+  </div>
+  ${res.provSinCuit.length ? `<div class="dup-aviso warn">Estos proveedores no tienen CUIT y no se pueden comparar: ${res.provSinCuit.map((id) => esc(proveedorNombre(id))).join(", ")}. Cargales el CUIT en Proveedores.</div>` : ""}
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:14px;">
+    <button class="btn small" id="btnArcaPdf">📄 Informe PDF de diferencias</button>
+    <button class="btn secondary small" id="btnArcaCsv">📊 Descargar Excel (CSV)</button>
+  </div>`}
+  </section>
+  </div>
+
+  ${res && !arcaCargando ? `
+  <section class="comp-full">
+    <div class="trip-h">3 · Detalle</div>
+    <div class="section-label primera">⚠️ Diferencia de importe (${res.dif.length})</div>${tablaArca(res.dif, "dif")}
+    <div class="section-label">⚠️ Número cargado distinto (${res.revisar.length})</div>${tablaArca(res.revisar, "revisar")}
+    <div class="section-label">❌ En ARCA y sin cargar en Facturero (${res.falta.length})</div>${tablaArca(res.falta, "falta")}
+    <div class="section-label">❓ Cargados como facturados y no están en ARCA (${res.noArca.length})</div>${tablaArca(res.noArca, "noArca")}
+    <details class="herramientas"><summary>✅ Coinciden (${res.ok.length})</summary>${tablaArca(res.ok, "ok")}</details>
+  </section>` : ""}
+  `;
+}
+
 function pageProveedores() {
   return `
   <div class="pagehead"><h1 class="serif">Proveedores</h1><p>Agregá los proveedores una vez y quedan disponibles para todas las sucursales.</p></div>
@@ -1081,7 +1217,7 @@ function wirePage() {
       btn.addEventListener("click", () => { syncDraft(); draft.grupo = btn.dataset.grupo; render(); }));
     on("f_nc", "change", (e) => { syncDraft(); draft.tipo = e.target.checked ? "NOTA_CREDITO" : "FACTURA"; render(); });
     on("btnNuevoProv", "click", () => { syncDraft(); showNewProv = !showNewProv; render(); if (showNewProv) document.getElementById("np_nombre")?.focus(); });
-    on("btnCancelarProv", "click", () => { syncDraft(); showNewProv = false; render(); });
+    on("btnCancelarProv", "click", () => { syncDraft(); showNewProv = false; provNuevoPendiente = null; render(); });
     on("btnGuardarProv", "click", async () => {
       const nombre = document.getElementById("np_nombre").value.trim();
       const cuit = document.getElementById("np_cuit").value.trim();
@@ -1089,7 +1225,7 @@ function wirePage() {
       syncDraft();
       const p = await crearProveedor(nombre, cuit);
       if (!p) return;
-      draft.proveedorId = p.id; showNewProv = false;
+      draft.proveedorId = p.id; showNewProv = false; provNuevoPendiente = null;
       toast("Proveedor agregado."); render();
     });
     on("btnGuardar", "click", guardarComprobante);
@@ -1099,6 +1235,11 @@ function wirePage() {
     if (draft?.numero?.trim()) verificarDuplicado();
     document.querySelectorAll("input.monto").forEach(wireMonto);
     document.querySelectorAll("input.cuit").forEach(wireCuit);
+    if (provNuevoPendiente && showNewProv) {
+      const n = document.getElementById("np_nombre"), c = document.getElementById("np_cuit");
+      if (n && !n.value) n.value = provNuevoPendiente.nombre;
+      if (c && !c.value) c.value = cuitTexto(provNuevoPendiente.cuit);
+    }
   }
 
   if (route === "listado") {
@@ -1159,6 +1300,22 @@ function wirePage() {
     const input = document.getElementById("importFile");
     on("btnImport", "click", () => input.click());
     input?.addEventListener("change", (e) => { const f = e.target.files[0]; if (f) importarBackup(f); });
+  }
+
+  if (route === "arca") {
+    const inp = document.getElementById("arcaFile");
+    on("btnArcaFile", "click", () => inp.click());
+    inp?.addEventListener("change", async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      try { arcaFilas = await leerArchivoArca(f); arcaArchivo = f.name; arcaError = ""; arcaRes = null; }
+      catch (err) { arcaError = err.message || "No se pudo leer el archivo."; render(); return; }
+      compararConArca();
+    });
+    on("btnArcaRecomparar", "click", compararConArca);
+    on("btnArcaPdf", "click", () => generarInformeArca({ res: arcaRes, archivo: arcaArchivo, proveedorNombre, sucursalNombre }));
+    on("btnArcaCsv", "click", descargarCsvArca);
+    document.querySelectorAll("[data-arcacargar]").forEach((b) => b.addEventListener("click", () => cargarDesdeArca(Number(b.dataset.arcacargar))));
+    document.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => corregirComprobante(b.dataset.edit)));
   }
 
   if (route === "proveedores") {

@@ -50,3 +50,45 @@ export function generarReportePDF({ list, desde, hasta, alcance, proveedorNombre
 
   doc.save(`facturero_reporte_${desde}_a_${hasta}.pdf`);
 }
+
+/** Informe de diferencias entre ARCA (Mis Comprobantes) y Facturero. */
+export function generarInformeArca({ res, archivo, proveedorNombre, sucursalNombre }) {
+  const doc = new jsPDF();
+  let y = 20;
+  const line = (text, step = 5) => { if (y > 280) { doc.addPage(); y = 20; } doc.text(String(text), 14, y); y += step; };
+  const wrap = (text, step = 4.6) => doc.splitTextToSize(String(text), 182).forEach((l) => line(l, step));
+  const num = (a) => `${a.pv.padStart(5, "0")}-${a.num.padStart(8, "0")}`;
+  const tipo = (nc) => (nc ? "N. crédito" : "Factura");
+
+  doc.setFontSize(16); line("Facturero — Control con ARCA", 8);
+  doc.setFontSize(10); doc.setTextColor(90);
+  line(`Período del archivo: ${fmtDate(res.desde)} a ${fmtDate(res.hasta)}`);
+  line(`Archivo: ${archivo}`);
+  line(`Generado: ${new Date().toLocaleString("es-AR")}`, 9);
+  doc.setTextColor(20);
+
+  doc.setFontSize(12); line("Resumen", 6);
+  doc.setFontSize(10);
+  line(`Coinciden: ${res.ok.length}`);
+  line(`Con diferencia de importe: ${res.dif.length}`);
+  line(`Número cargado distinto: ${res.revisar.length}`);
+  line(`En ARCA y sin cargar en Facturero: ${res.falta.length}`);
+  line(`Cargados como facturados y no están en ARCA: ${res.noArca.length}`, 9);
+
+  const seccion = (titulo, items, fila) => {
+    doc.setFontSize(12); line(`${titulo} (${items.length})`, 6);
+    doc.setFontSize(9);
+    if (!items.length) line("Sin casos.", 7);
+    else { items.forEach((it) => wrap(fila(it))); y += 3; }
+  };
+  seccion("Diferencia de importe", res.dif, ({ a, c, detalle }) =>
+    `${fmtDate(a.fecha)} · ${tipo(a.nc)} ${num(a)} · ${a.nombre || proveedorNombre(c.proveedor_id)} · ${sucursalNombre(c.sucursal_id)} — ${detalle.join(" · ")}`);
+  seccion("Número cargado distinto", res.revisar, ({ a, c, detalle }) =>
+    `${fmtDate(a.fecha)} · ${tipo(a.nc)} · ${a.nombre || proveedorNombre(c.proveedor_id)} · ${fmtMoney(a.total)} · ${sucursalNombre(c.sucursal_id)} — ${detalle.join(" · ")}`);
+  seccion("En ARCA y sin cargar en Facturero", res.falta, ({ a }) =>
+    `${fmtDate(a.fecha)} · ${tipo(a.nc)} ${num(a)} · ${a.nombre} (CUIT ${a.cuit}) — ${fmtMoney(a.total)}`);
+  seccion("Cargados como facturados y no están en ARCA", res.noArca, ({ c }) =>
+    `${fmtDate(c.fecha)} · ${c.tipo === "NOTA_CREDITO" ? "N. crédito" : "Factura"} N° ${c.numero} · ${proveedorNombre(c.proveedor_id)} · ${sucursalNombre(c.sucursal_id)} — ${fmtMoney(c.monto)}`);
+
+  doc.save(`facturero_control_arca_${res.desde}_a_${res.hasta}.pdf`);
+}

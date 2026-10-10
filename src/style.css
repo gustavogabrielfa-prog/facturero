@@ -288,3 +288,17 @@ body[data-mode="NOTA_CREDITO"] .pivote{background:var(--danger-bg);}
   .wrap.ruta-proveedores > .app-footer{display:none;}
   .wrap.ruta-proveedores .prov-tabla thead th{position:sticky; top:0; background:var(--panel);}
 }
+/* Control con ARCA */
+.arca-pasos{margin:0 0 14px; padding-left:20px; font-size:13.5px; line-height:1.6;}
+.arca-kpis{display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:8px;}
+.arca-kpi{background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:12px; border-left-width:4px;}
+.arca-kpi.ok{border-left-color:var(--facturado);}
+.arca-kpi.warn{border-left-color:var(--nofacturado);}
+.arca-kpi.err{border-left-color:var(--danger);}
+.arca-kpi-n{font-family:'Fraunces',serif; font-size:24px; font-weight:600;}
+.arca-kpi-l{font-size:12px; color:var(--muted); font-weight:600;}
+.arca-tabla td, .arca-tabla th{padding-left:10px; white-space:nowrap;}
+.arca-tabla td:first-child, .arca-tabla th:first-child{padding-left:0; white-space:normal; min-width:180px;}
+.arca-tabla td small{display:block; font-size:11.5px; color:var(--muted); margin-top:2px;}
+.arca-dif{color:var(--danger); font-weight:700;}
+.arca-vacio{font-size:13px; color:var(--muted); padding:4px 0 8px;}
