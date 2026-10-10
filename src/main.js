@@ -497,7 +497,7 @@ function syncDraft() {
 
 /** CUIT con guiones mientras se escribe: 30-12345678-9 */
 function cuitTexto(v) {
-  const d = String(v).replace(/D/g, "").slice(0, 11);
+  const d = String(v).replace(/\D/g, "").slice(0, 11);
   return d.length > 10 ? `${d.slice(0, 2)}-${d.slice(2, 10)}-${d.slice(10)}` : d.length > 2 ? `${d.slice(0, 2)}-${d.slice(2)}` : d;
 }
 function wireCuit(el) {
@@ -506,7 +506,7 @@ function wireCuit(el) {
 
 async function crearProveedor(nombre, cuit) {
   cuit = cuitTexto(cuit || "");
-  if (cuit && !/^d{2}-d{8}-d$/.test(cuit)) { toast("El CUIT tiene que tener 11 números (ej: 30-12345678-9)."); return null; }
+  if (cuit && !/^\d{2}-\d{8}-\d$/.test(cuit)) { toast("El CUIT tiene que tener 11 números (ej: 30-12345678-9)."); return null; }
   const { data, error } = await sb.from("proveedores").insert({ nombre, cuit: cuit || null }).select().single();
   if (error) { toast(errorMsg(error, "proveedor")); return null; }
   state.proveedores.push(data);
