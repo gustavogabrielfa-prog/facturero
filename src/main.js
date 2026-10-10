@@ -22,6 +22,7 @@ let route = location.hash.replace("#", "") || "subir";
 let draft = null;
 let editId = null;           // id del comprobante que el admin está corrigiendo (null = alta nueva)
 let ultimoProveedorId = "";   // queda elegido hasta que lo cambien o se cierre la app
+let ultimaFecha = "";         // ídem con la fecha: al cerrar o actualizar vuelve a la del día
 let showNewProv = false;
 let saving = false;
 let loginError = "";
@@ -212,7 +213,7 @@ async function onSession(session) {
   if (!session) {
     unsubscribeRealtime();
     Object.assign(state, { perfil: null, sucursales: [], proveedores: [], booting: false, bootError: "" });
-    comprobantes = []; listLoaded = false; draft = null; editId = null; ultimoProveedorId = ""; busqueda = ""; busqResultados = null; arcaFilas = null; arcaRes = null; arcaComps = [];
+    comprobantes = []; listLoaded = false; draft = null; editId = null; ultimoProveedorId = ""; ultimaFecha = ""; busqueda = ""; busqResultados = null; arcaFilas = null; arcaRes = null; arcaComps = [];
     hoy = []; hoyLoaded = false; clearTimeout(medianocheTimer);
     render(); return;
   }
@@ -370,7 +371,7 @@ function newDraft() {
     sucursalId: state.perfil.sucursal_id || state.sucursales[0]?.id || "",
     proveedorId: state.proveedores.some((p) => p.id === ultimoProveedorId) ? ultimoProveedorId : state.proveedores[0]?.id || "",
     tipo: "FACTURA", facturaRef: "",
-    fecha: todayISO(), numero: "", monto: "",
+    fecha: ultimaFecha || todayISO(), numero: "", monto: "",
     iva21: "", iva105: "", iva27: "", iva5: "", iva25: "", iibb: "", notas: "", tributos: {},
   };
 }
@@ -634,6 +635,7 @@ async function guardarComprobante() {
   if (error) { toast(errorMsg(error)); render(); return; }
   hoyLoaded = false;   // render() vuelve a traer el historial del día
   ultimoProveedorId = d.proveedorId;
+  if (!editId) ultimaFecha = d.fecha;   // corregir uno viejo no cambia la fecha predeterminada
 
   toast(editId ? "Comprobante corregido." : "Comprobante guardado.");
   draft = null; editId = null; showNewProv = false; listLoaded = false;

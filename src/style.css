@@ -1,25 +1,25 @@
 :root{
-  --ink:#12211c; --paper:#f4f6f3; --panel:#ffffff; --line:#d8ddd7; --line-strong:#12211c;
-  --muted:#5d6b64; --accent:#1f6f6b;
-  --facturado:#2f8f5b; --facturado-bg:#e5f3ea;
-  --nofacturado:#c1792e; --nofacturado-bg:#faeee0;
-  --danger:#b4432f; --danger-bg:#f8e6e2; --focus:#1f6f6b;
+  --ink:#0a1410; --paper:#e8ece7; --panel:#ffffff; --line:#aeb8b1; --line-strong:#0a1410;
+  --muted:#3f4c45; --accent:#17605c;
+  --facturado:#1d7146; --facturado-bg:#dcefe3;
+  --nofacturado:#9a5a17; --nofacturado-bg:#f7e7d3;
+  --danger:#9c3322; --danger-bg:#f6dfda; --focus:#17605c;
   /* Colores del gráfico: validados para daltonismo (más separados en luminosidad que los de UI) */
   --chart-fact:#23744a; --chart-nofact:#d9933f;
   font-family:'Inter',system-ui,-apple-system,sans-serif;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
-    --ink:#eef1ee; --paper:#0f1613; --panel:#161f1b; --line:#2a352f; --line-strong:#eef1ee;
-    --muted:#93a099; --accent:#59b3ad; --facturado:#5fcf8f; --facturado-bg:#123222;
-    --nofacturado:#e2a862; --nofacturado-bg:#3a2a15; --danger:#e2796a; --danger-bg:#3a1e19;
+    --ink:#f7f9f7; --paper:#0a0f0d; --panel:#18221e; --line:#45524b; --line-strong:#f7f9f7;
+    --muted:#b9c4be; --accent:#6cc6c0; --facturado:#72dda0; --facturado-bg:#123222;
+    --nofacturado:#f0b874; --nofacturado-bg:#3a2a15; --danger:#f08a7b; --danger-bg:#3a1e19;
     --chart-fact:#1f7d4a; --chart-nofact:#c2852c;
   }
 }
 :root[data-theme="dark"]{
-  --ink:#eef1ee; --paper:#0f1613; --panel:#161f1b; --line:#2a352f; --line-strong:#eef1ee;
-  --muted:#93a099; --accent:#59b3ad; --facturado:#5fcf8f; --facturado-bg:#123222;
-  --nofacturado:#e2a862; --nofacturado-bg:#3a2a15; --danger:#e2796a; --danger-bg:#3a1e19;
+  --ink:#f7f9f7; --paper:#0a0f0d; --panel:#18221e; --line:#45524b; --line-strong:#f7f9f7;
+  --muted:#b9c4be; --accent:#6cc6c0; --facturado:#72dda0; --facturado-bg:#123222;
+  --nofacturado:#f0b874; --nofacturado-bg:#3a2a15; --danger:#f08a7b; --danger-bg:#3a1e19;
     --chart-fact:#1f7d4a; --chart-nofact:#c2852c;
 }
 *{box-sizing:border-box;}
@@ -66,8 +66,8 @@ header.top{display:flex; align-items:center; justify-content:space-between; padd
 
 .panel{background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:22px;}
 .field{display:flex; flex-direction:column; gap:6px; margin-bottom:16px;}
-.field label{font-size:12.5px; color:var(--muted); font-weight:600;}
-.field input, .field select, .field textarea{padding:11px 12px; border:1px solid var(--line); border-radius:4px; background:var(--panel); color:var(--ink); width:100%;}
+.field label{font-size:13px; color:var(--ink); font-weight:600;}
+.field input, .field select, .field textarea{padding:11px 12px; border:1px solid var(--muted); border-radius:4px; background:var(--panel); color:var(--ink); width:100%;}
 .field textarea{resize:vertical; min-height:56px;}
 .row2{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
 @media (max-width:480px){ .row2{grid-template-columns:1fr;} }
@@ -80,7 +80,7 @@ header.top{display:flex; align-items:center; justify-content:space-between; padd
 
 .provrow{display:flex; gap:8px;}
 .provrow select{flex:1;}
-.provrow button{flex-shrink:0; padding:0 14px; border:1px solid var(--line); border-radius:4px; background:var(--panel); color:var(--ink); font-size:13px; font-weight:600;}
+.provrow button{flex-shrink:0; padding:0 14px; border:1px solid var(--muted); border-radius:4px; background:var(--panel); color:var(--ink); font-size:13px; font-weight:600;}
 .provrow button:hover{background:var(--paper);}
 
 .newprov{border:1px solid var(--line); border-radius:5px; padding:16px; margin-top:10px; background:var(--paper);}
