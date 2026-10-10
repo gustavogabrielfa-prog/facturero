@@ -118,7 +118,7 @@ function busqHtml() {
   if (busqResultados === null) return `<div class="busq-info">Buscando…</div>`;
   const n = busqResultados.length;
   return `<div class="busq-info">${n}${n === 50 ? "+" : ""} resultado${n === 1 ? "" : "s"} en todas las fechas · <button type="button" class="linkbtn" data-limpiar>Limpiar búsqueda</button></div>
-  ${n ? tablaComprobantes(busqResultados, { delAttr: "data-delbusq", iconos: true })
+  ${n ? tablaComprobantes(busqResultados, { delAttr: "data-delbusq" })
     : `<div class="empty-state panel"><span class="serif">Sin resultados</span>No hay comprobantes con ese número.</div>`}`;
 }
 
@@ -240,6 +240,8 @@ function render() {
 
   document.body.dataset.mode = route === "subir" && draft ? (draft.tipo === "NOTA_CREDITO" ? "NOTA_CREDITO" : draft.grupo) : "";
   app.innerHTML = shell(body, true, true);
+  const piv = app.querySelector(".pivote");
+  if (piv) document.documentElement.style.setProperty("--piv-h", piv.offsetHeight + "px");
   wireShell();
   wirePage();
 
@@ -254,7 +256,8 @@ function shell(bodyHtml, logged, tabs = false) {
       : sucursalNombre(state.perfil.sucursal_id)
     : "";
   return `
-  <div class="wrap${logged && route === "listado" ? " ancho" : ""}">
+  <div class="wrap${logged && (route === "listado" || route === "subir") ? " ancho" : ""}">
+    <div class="pivote">
     <header class="top">
       <div class="brand"><div class="brand-mark">F</div><div class="brand-name">Facturero</div></div>
       ${logged ? `<div class="top-right">
@@ -267,6 +270,7 @@ function shell(bodyHtml, logged, tabs = false) {
       <button data-route="proveedores" class="${route === "proveedores" ? "active" : ""}">🏷 Proveedores</button>
       ${veListado() ? `<button data-route="listado" class="${route === "listado" ? "active" : ""}">🗂 Listado</button>` : ""}
     </div>` : ""}
+    </div>
     ${bodyHtml}
     <footer class="app-footer">Los datos se guardan en la nube (Supabase) y se comparten entre sucursales.</footer>
   </div>`;
@@ -372,6 +376,9 @@ function pageSubir() {
     ? `<h1 class="serif">Corregir comprobante</h1><p>Cambiá lo que haga falta y guardá. El comprobante se actualiza, no se duplica.</p>`
     : `<h1 class="serif">Subir comprobante</h1><p>Cargá los datos del comprobante — sin adjuntar archivos.</p>`}</div>
 
+  <div class="trip trip3">
+  <section class="trip-col fija">
+  <div class="trip-h">1 · Comprobante</div>
   <div class="badge-group" id="grupoToggle">
     <button data-grupo="FACTURADO" class="${d.grupo === "FACTURADO" ? "active fact" : ""}">Facturado</button>
     <button data-grupo="NO_FACTURADO" class="${d.grupo === "NO_FACTURADO" ? "active nofact" : ""}">No facturado</button>
@@ -414,8 +421,11 @@ function pageSubir() {
   </div>
   ${d.tipo === "NOTA_CREDITO" ? `<div class="field"><label>Factura que afecta (opcional)</label><input type="text" id="f_facturaRef" value="${esc(d.facturaRef)}" placeholder="0001-00012345"></div>` : ""}
   <div class="field"><label>Monto total *</label><input type="text" inputmode="decimal" autocomplete="off" class="monto" id="f_monto" value="${esc(d.monto)}" placeholder="0"></div>
+  </section>
 
-  <div class="section-label">IVA por alícuota — dejá en 0 la que no aplique (ej. medicamento exento)</div>
+  <section class="trip-col fija">
+  <div class="trip-h">2 · Impuestos y guardar</div>
+  <div class="section-label primera">IVA por alícuota — dejá en 0 la que no aplique (ej. medicamento exento)</div>
   <div class="row2">${ivaField("iva21", "IVA 21%")}${ivaField("iva105", "IVA 10,5%")}</div>
   <div class="row2">${ivaField("iva27", "IVA 27%")}${ivaField("iva5", "IVA 5%")}</div>
   ${ivaField("iva25", "IVA 2,5%")}
@@ -428,9 +438,13 @@ function pageSubir() {
 
   <button class="btn" id="btnGuardar" ${saving ? "disabled" : ""}>${saving ? "Guardando…" : editId ? "Guardar cambios" : "Guardar comprobante"}</button>
   ${editId ? `<button class="btn secondary" id="btnCancelarEdit" style="margin-top:10px;">Cancelar corrección</button>` : ""}
+  </section>
 
-  <div class="section-label" style="margin-top:28px;">Cargados hoy</div>
+  <section class="trip-col">
+  <div class="trip-h">3 · Cargados hoy</div>
   <div id="hoyList"><div class="loading">Cargando…</div></div>
+  </section>
+  </div>
   `;
 }
 
@@ -468,7 +482,7 @@ function renderHoy() {
     el.innerHTML = `<div class="empty-state panel" style="padding:26px 20px;">Todavía no cargaste comprobantes hoy.<br>Se reinicia todos los días a las 00:00.</div>`;
     return;
   }
-  el.innerHTML = tablaComprobantes(hoy, { conHora: true, delAttr: "data-delhoy" });   // sin suma del día
+  el.innerHTML = tablaComprobantes(hoy, { conHora: true, delAttr: "data-delhoy", iconos: true });   // sin suma del día
   el.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => corregirComprobante(b.dataset.edit)));
   el.querySelectorAll("[data-delhoy]").forEach((b) => b.addEventListener("click", async () => {
     if (await eliminarComprobante(b.dataset.delhoy)) { listLoaded = false; render(); }
@@ -532,7 +546,7 @@ function seccionDuplicados() {
   <p class="muted-p">Busca en todas las fechas comprobantes del mismo proveedor con el mismo número (aunque estén escritos distinto). Revisalos y eliminá el que sobre.</p>
   <button class="btn secondary small mb16" id="btnDuplicados" ${dupBuscando ? "disabled" : ""}>${dupBuscando ? "Buscando…" : dupGrupos ? "Volver a revisar" : "Revisar duplicados"}</button>
   ${dupGrupos === null ? "" : dupGrupos.length
-    ? dupGrupos.map((grp) => tablaComprobantes(grp, { iconos: true })).join(`<div style="height:10px"></div>`)
+    ? dupGrupos.map((grp) => tablaComprobantes(grp)).join(`<div style="height:10px"></div>`)
     : `<div class="empty-state panel mb26">No hay comprobantes duplicados.</div>`}`;
 }
 
@@ -748,7 +762,7 @@ function pageListado() {
   return `
   <div class="pagehead"><h1 class="serif">Listado</h1><p>${esAdmin() ? "Comprobantes de todas las sucursales." : "Comprobantes de " + esc(sucursalNombre(state.perfil.sucursal_id)) + "."}</p></div>
 
-  <div class="trip">
+  <div class="trip trip2">
   <section class="trip-col">
   <div class="trip-h">1 · Período y totales</div>
   <div class="panel mb16" style="padding:16px;">
@@ -836,8 +850,9 @@ function pageListado() {
     ? chartAporte(hist, { titulo: "Aporte por sucursal", campo: "sucursal_id", nombre: sucursalNombre, attr: "data-sfil" }) : ""}
   ${provFilter === "todos" ? chartAporte(hist, { titulo: "Aporte por proveedor", campo: "proveedor_id", nombre: proveedorNombre, attr: "data-pfil" }) : ""}` : `<div class="empty-state panel">No hay comprobantes para este filtro.</div>`}`}
   </section>
+  </div>
 
-  <section class="trip-col">
+  <section class="comp-full">
   <div class="trip-h">3 · Comprobantes</div>
   <div class="field busq" style="margin-bottom:12px;">
     <label>Buscar por N° de comprobante</label>
@@ -846,11 +861,10 @@ function pageListado() {
   <div id="busqRes">${busqHtml()}</div>
   <div id="histNormal" ${busqueda.trim() ? "hidden" : ""}>
   ${listLoading ? cargando : hist.length
-    ? tablaComprobantes(hist, { iconos: true })
+    ? tablaComprobantes(hist)
     : `<div class="empty-state panel"><span class="serif">Sin comprobantes</span>No hay comprobantes para este filtro.</div>`}
   </div>
   </section>
-  </div>
 
   ${esAdmin() ? `<details class="herramientas"${dupGrupos !== null || dupBuscando ? " open" : ""}>
   <summary>Herramientas del administrador · duplicados, otros tributos e importar</summary>
