@@ -118,7 +118,7 @@ function busqHtml() {
   if (busqResultados === null) return `<div class="busq-info">Buscando…</div>`;
   const n = busqResultados.length;
   return `<div class="busq-info">${n}${n === 50 ? "+" : ""} resultado${n === 1 ? "" : "s"} en todas las fechas · <button type="button" class="linkbtn" data-limpiar>Limpiar búsqueda</button></div>
-  ${n ? tablaComprobantes(busqResultados, { delAttr: "data-delbusq" })
+  ${n ? tablaComprobantes(busqResultados, { delAttr: "data-delbusq", iconos: true })
     : `<div class="empty-state panel"><span class="serif">Sin resultados</span>No hay comprobantes con ese número.</div>`}`;
 }
 
@@ -254,7 +254,7 @@ function shell(bodyHtml, logged, tabs = false) {
       : sucursalNombre(state.perfil.sucursal_id)
     : "";
   return `
-  <div class="wrap">
+  <div class="wrap${logged && route === "listado" ? " ancho" : ""}">
     <header class="top">
       <div class="brand"><div class="brand-mark">F</div><div class="brand-name">Facturero</div></div>
       ${logged ? `<div class="top-right">
@@ -435,7 +435,7 @@ function pageSubir() {
 }
 
 /** Lista simple de comprobantes (total, IVA, IIBB) para revisar de un vistazo; admin con Corregir / Eliminar. */
-function tablaComprobantes(list, { conHora = false, delAttr = "data-del" } = {}) {
+function tablaComprobantes(list, { conHora = false, delAttr = "data-del", iconos = false } = {}) {
   const hora = (ts) => new Date(ts).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   const iva = (c) => IMPUESTOS.reduce((a, [k]) => a + (Number(c[k]) || 0), 0);
   const $ = (c, v) => fmtMoney(signo(c) * (Number(v) || 0));
@@ -452,7 +452,9 @@ function tablaComprobantes(list, { conHora = false, delAttr = "data-del" } = {})
       <td class="tot">${$(c, c.monto)}</td>
       <td>${$(c, iva(c))}</td>
       <td>${$(c, c.iibb)}</td>
-      ${esAdmin() ? `<td><div class="hoy-acc"><button class="btn secondary small" data-edit="${c.id}">Corregir</button><button class="btn secondary small" ${delAttr}="${c.id}">Eliminar</button></div></td>` : ""}
+      ${esAdmin() ? `<td><div class="hoy-acc">${iconos
+        ? `<button class="btn secondary small ico" data-edit="${c.id}" title="Corregir" aria-label="Corregir">✎</button><button class="btn secondary small ico" ${delAttr}="${c.id}" title="Eliminar" aria-label="Eliminar">🗑</button>`
+        : `<button class="btn secondary small" data-edit="${c.id}">Corregir</button><button class="btn secondary small" ${delAttr}="${c.id}">Eliminar</button>`}</div></td>` : ""}
     </tr>`;
     }).join("")}</tbody>
   </table></div>`;
@@ -530,7 +532,7 @@ function seccionDuplicados() {
   <p class="muted-p">Busca en todas las fechas comprobantes del mismo proveedor con el mismo número (aunque estén escritos distinto). Revisalos y eliminá el que sobre.</p>
   <button class="btn secondary small mb16" id="btnDuplicados" ${dupBuscando ? "disabled" : ""}>${dupBuscando ? "Buscando…" : dupGrupos ? "Volver a revisar" : "Revisar duplicados"}</button>
   ${dupGrupos === null ? "" : dupGrupos.length
-    ? dupGrupos.map((grp) => tablaComprobantes(grp)).join(`<div style="height:10px"></div>`)
+    ? dupGrupos.map((grp) => tablaComprobantes(grp, { iconos: true })).join(`<div style="height:10px"></div>`)
     : `<div class="empty-state panel mb26">No hay comprobantes duplicados.</div>`}`;
 }
 
@@ -742,10 +744,14 @@ function pageListado() {
   if (provFilter !== "todos") hist = hist.filter((c) => c.proveedor_id === provFilter);
   const ht = computeTotals(hist);
 
+  const cargando = `<div class="loading">Cargando comprobantes…</div>`;
   return `
   <div class="pagehead"><h1 class="serif">Listado</h1><p>${esAdmin() ? "Comprobantes de todas las sucursales." : "Comprobantes de " + esc(sucursalNombre(state.perfil.sucursal_id)) + "."}</p></div>
 
-  <div class="panel mb26" style="padding:18px;">
+  <div class="trip">
+  <section class="trip-col">
+  <div class="trip-h">1 · Período y totales</div>
+  <div class="panel mb16" style="padding:16px;">
     <div class="filters">
       <button data-range="semana">Esta semana</button>
       <button data-range="mes">Este mes</button>
@@ -765,7 +771,7 @@ function pageListado() {
     </div>
   </div>
 
-  ${listLoading ? `<div class="loading">Cargando comprobantes…</div>` : `
+  ${listLoading ? cargando : `
   <div class="kpi-row">
     <div class="kpi"><div class="kpi-label">Facturado (blanco)</div><div class="kpi-value">${fmtMoney(t.fact)}</div></div>
     <div class="kpi"><div class="kpi-label">No facturado (negro)</div><div class="kpi-value">${fmtMoney(t.noFact)}</div></div>
@@ -797,15 +803,12 @@ function pageListado() {
   </div>
   ${periods.length
     ? `<div class="panel mb26" style="padding:0 18px;">${tablaResumen(periods, (k) => periodLabel(k, periodGranularity))}</div>`
-    : `<div class="empty-state panel mb26">No hay comprobantes en este período.</div>`}
+    : `<div class="empty-state panel mb26">No hay comprobantes en este período.</div>`}`}
+  </section>
 
-  <div class="section-label" style="border-top:none; padding-top:0;">Historial</div>
-  <div class="field busq" style="margin-bottom:12px;">
-    <label>Buscar por N° de comprobante</label>
-    <input type="search" id="fBusq" inputmode="search" autocomplete="off" placeholder="Ej: 031700020301" value="${esc(busqueda)}">
-  </div>
-  <div id="busqRes">${busqHtml()}</div>
-  <div id="histNormal" ${busqueda.trim() ? "hidden" : ""}>
+  <section class="trip-col">
+  <div class="trip-h">2 · Análisis</div>
+  ${listLoading ? cargando : `
   <div class="filters">
     <button data-filter="todos" class="${listFilter === "todos" ? "active" : ""}">Todos</button>
     <button data-filter="facturado" class="${listFilter === "facturado" ? "active" : ""}">Facturado</button>
@@ -831,21 +834,37 @@ function pageListado() {
   ${chartCompras(hist)}` : ""}
   ${esAdmin() && sucursalFilter === "todas" && provFilter === "todos" && new Set(hist.map((c) => c.sucursal_id)).size > 1
     ? chartAporte(hist, { titulo: "Aporte por sucursal", campo: "sucursal_id", nombre: sucursalNombre, attr: "data-sfil" }) : ""}
-  ${provFilter === "todos" ? chartAporte(hist, { titulo: "Aporte por proveedor", campo: "proveedor_id", nombre: proveedorNombre, attr: "data-pfil" }) : ""}` : ""}
-  ${hist.length ? tablaComprobantes(hist) : `<div class="empty-state panel"><span class="serif">Sin comprobantes</span>No hay comprobantes para este filtro.</div>`}
+  ${provFilter === "todos" ? chartAporte(hist, { titulo: "Aporte por proveedor", campo: "proveedor_id", nombre: proveedorNombre, attr: "data-pfil" }) : ""}` : `<div class="empty-state panel">No hay comprobantes para este filtro.</div>`}`}
+  </section>
+
+  <section class="trip-col">
+  <div class="trip-h">3 · Comprobantes</div>
+  <div class="field busq" style="margin-bottom:12px;">
+    <label>Buscar por N° de comprobante</label>
+    <input type="search" id="fBusq" inputmode="search" autocomplete="off" placeholder="Ej: 031700020301" value="${esc(busqueda)}">
   </div>
-  `}
+  <div id="busqRes">${busqHtml()}</div>
+  <div id="histNormal" ${busqueda.trim() ? "hidden" : ""}>
+  ${listLoading ? cargando : hist.length
+    ? tablaComprobantes(hist, { iconos: true })
+    : `<div class="empty-state panel"><span class="serif">Sin comprobantes</span>No hay comprobantes para este filtro.</div>`}
+  </div>
+  </section>
+  </div>
 
-  ${esAdmin() ? seccionDuplicados() : ""}
+  ${esAdmin() ? `<details class="herramientas"${dupGrupos !== null || dupBuscando ? " open" : ""}>
+  <summary>Herramientas del administrador · duplicados, otros tributos e importar</summary>
+  ${seccionDuplicados()}
 
-  ${esAdmin() ? seccionTributos() : ""}
+  ${seccionTributos()}
 
-  ${esAdmin() ? `<div class="section-label">Migrar datos de la versión anterior</div>
+  <div class="section-label">Migrar datos de la versión anterior</div>
   <div class="filters">
     <button id="btnImport">📤 Importar copia de seguridad (.json)</button>
     <input type="file" id="importFile" accept="application/json" style="display:none;">
   </div>
-  <div class="hint">Subí las copias descargadas desde el Facturero anterior (una por sucursal). Los comprobantes repetidos se ignoran.</div>` : ""}
+  <div class="hint">Subí las copias descargadas desde el Facturero anterior (una por sucursal). Los comprobantes repetidos se ignoran.</div>
+  </details>` : ""}
   `;
 }
 
