@@ -238,7 +238,7 @@ function render() {
   else if (route === "proveedores") body = pageProveedores();
   else { route = "subir"; body = pageSubir(); }
 
-  document.body.dataset.mode = route === "subir" && draft ? draft.grupo : "";
+  document.body.dataset.mode = route === "subir" && draft ? (draft.tipo === "NOTA_CREDITO" ? "NOTA_CREDITO" : draft.grupo) : "";
   app.innerHTML = shell(body, true, true);
   wireShell();
   wirePage();

@@ -35,6 +35,16 @@ body[data-mode="NO_FACTURADO"] .panel, body[data-mode="NO_FACTURADO"] .newprov, 
 body[data-mode="NO_FACTURADO"] .section-label{ color: var(--nofacturado); border-top-color: var(--nofacturado); }
 body[data-mode="NO_FACTURADO"] ::selection{ background: var(--nofacturado); color:#fff; }
 body[data-mode="NO_FACTURADO"] input:focus-visible, body[data-mode="NO_FACTURADO"] select:focus-visible, body[data-mode="NO_FACTURADO"] textarea:focus-visible, body[data-mode="NO_FACTURADO"] button:focus-visible{ outline-color: var(--nofacturado); }
+body[data-mode="NOTA_CREDITO"]{ background: var(--danger-bg); }
+body[data-mode="NOTA_CREDITO"] .brand-mark{ border-color: var(--danger); color: var(--danger); }
+body[data-mode="NOTA_CREDITO"] .tabs{ border-color: var(--danger); }
+body[data-mode="NOTA_CREDITO"] .tabs button.active{ background: var(--danger); color:#fff; }
+body[data-mode="NOTA_CREDITO"] .btn:not(.secondary):not(.danger){ background: var(--danger); border-color: var(--danger); color:#fff; }
+body[data-mode="NOTA_CREDITO"] .field input, body[data-mode="NOTA_CREDITO"] .field select, body[data-mode="NOTA_CREDITO"] .field textarea{ border-color: var(--danger); }
+body[data-mode="NOTA_CREDITO"] .panel, body[data-mode="NOTA_CREDITO"] .newprov, body[data-mode="NOTA_CREDITO"] .provrow button{ border-color: var(--danger); }
+body[data-mode="NOTA_CREDITO"] .section-label{ color: var(--danger); border-top-color: var(--danger); }
+body[data-mode="NOTA_CREDITO"] ::selection{ background: var(--danger); color:#fff; }
+body[data-mode="NOTA_CREDITO"] input:focus-visible, body[data-mode="NOTA_CREDITO"] select:focus-visible, body[data-mode="NOTA_CREDITO"] textarea:focus-visible, body[data-mode="NOTA_CREDITO"] button:focus-visible{ outline-color: var(--danger); }
 h1,h2,.serif{font-family:'Fraunces',serif;}
 button{font-family:inherit;cursor:pointer;}
 input,select,textarea{font-family:inherit;font-size:15px;}
