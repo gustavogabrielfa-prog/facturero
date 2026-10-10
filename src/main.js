@@ -985,17 +985,14 @@ function pageProveedores() {
   </section>
   <section class="trip-col">
   <div class="trip-h">2 · Proveedores (${state.proveedores.length})</div>
-  <div class="prov-grid">
-  ${state.proveedores.length ? state.proveedores.map((p) => `
-    <div class="card">
-      <div class="card-icon">🏷</div>
-      <div class="card-body">
-        <div class="card-title">${esc(p.nombre)}</div>
-        <div class="card-sub">${p.cuit ? "CUIT " + esc(p.cuit) : "Sin CUIT cargado"}</div>
-      </div>
-      ${esAdmin() ? `<button class="btn secondary small" data-delprov="${p.id}">Eliminar</button>` : ""}
-    </div>`).join("") : `<div class="empty-state panel"><span class="serif">Sin proveedores</span>Agregá el primero.</div>`}
-  </div>
+  ${state.proveedores.length ? `<div class="hoy-wrap"><table class="data-table prov-tabla">
+    <thead><tr><th>Proveedor</th><th>CUIT</th>${esAdmin() ? "<th></th>" : ""}</tr></thead>
+    <tbody>${state.proveedores.map((p) => `<tr>
+      <td>${esc(p.nombre)}</td>
+      <td>${p.cuit ? esc(p.cuit) : `<span class="muted">Sin CUIT</span>`}</td>
+      ${esAdmin() ? `<td><button class="btn secondary small" data-delprov="${p.id}">Eliminar</button></td>` : ""}
+    </tr>`).join("")}</tbody>
+  </table></div>` : `<div class="empty-state panel"><span class="serif">Sin proveedores</span>Agregá el primero.</div>`}
   </section>
   </div>
   `;
