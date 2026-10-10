@@ -206,3 +206,8 @@ button.prov-row:hover, button.prov-row:focus-visible{background:color-mix(in srg
 .hoy-acc .btn{padding:5px 9px; font-size:12px;}
 .busq-info{font-size:13px; color:var(--muted); margin:-4px 0 12px;}
 .linkbtn{background:none; border:0; padding:0; color:var(--ink); text-decoration:underline; font:inherit; cursor:pointer;}
+.dup-aviso{margin-top:8px; padding:9px 12px; border-radius:5px; font-size:12.5px; line-height:1.5; border:1px solid;}
+.dup-aviso div{margin-top:2px;}
+.dup-aviso.err{background:var(--danger-bg); color:var(--danger); border-color:var(--danger);}
+.dup-aviso.warn{background:var(--panel); color:var(--nofacturado); border-color:var(--nofacturado);}
+.muted-p{font-size:13px; color:var(--muted); margin:0 0 12px;}

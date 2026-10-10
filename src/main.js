@@ -3,7 +3,7 @@ import { sb, configOk, fetchAll, errorMsg } from "./supabase.js";
 import {
   esc, fmtMoney, fmtDate, todayISO, weekRange, monthRange, yearRange,
   IMPUESTOS, computeTotals, groupBy, groupByPeriod, periodLabel,
-  periodKey, periodKeysBetween, periodShort, fmtCompact, parseMonto, formatMontoTexto, montoTexto,
+  periodKey, periodKeysBetween, periodShort, fmtCompact, parseMonto, formatMontoTexto, montoTexto, numeroNorm,
 } from "./format.js";
 import { generarReportePDF } from "./pdf.js";
 
@@ -42,6 +42,9 @@ let provFilter = "todos";
 let busqueda = "";          // N° de comprobante a buscar (en todas las fechas)
 let busqResultados = null;  // null = buscando
 let busqSeq = 0, busqTimer = null;
+let dupSeq = 0, dupTimer = null;
+let dupGrupos = null;       // revisión de duplicados ya cargados (admin): null = sin revisar
+let dupBuscando = false;
 let chartGran = null;   // null = automático según el rango de fechas
 let chartData = null;   // columnas del gráfico, para el tooltip
 
@@ -130,6 +133,7 @@ function renderBusq() {
     busqueda = ""; busqResultados = null; busqSeq++;
     const inp = document.getElementById("fBusq"); if (inp) inp.value = "";
     renderBusq();
+    on("btnDuplicados", "click", buscarDuplicados);
   }));
   el.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => corregirComprobante(b.dataset.edit)));
   el.querySelectorAll("[data-delbusq]").forEach((b) => b.addEventListener("click", async () => {
@@ -371,7 +375,7 @@ function pageSubir() {
 
   <div class="row2">
     <div class="field"><label>Fecha</label><input type="date" id="f_fecha" value="${esc(d.fecha)}"></div>
-    <div class="field"><label>Número de comprobante *</label><input type="text" id="f_numero" value="${esc(d.numero)}" placeholder="0001-00012345"></div>
+    <div class="field"><label>Número de comprobante *</label><input type="text" id="f_numero" value="${esc(d.numero)}" placeholder="0001-00012345"><div id="dupAviso"></div></div>
   </div>
   <div class="field"><label>Monto total *</label><input type="text" inputmode="decimal" autocomplete="off" class="monto" id="f_monto" value="${esc(d.monto)}" placeholder="0"></div>
 
@@ -448,9 +452,53 @@ async function crearProveedor(nombre, cuit) {
   return data;
 }
 
+/** Comprobantes del mismo proveedor con el mismo número (ignora guiones y ceros). [] si no hay o si falla. */
+async function mismosNumero(proveedorId, numero) {
+  if (!proveedorId || !numero.trim()) return [];
+  const { data, error } = await sb.rpc("comprobantes_mismo_numero", { p_proveedor: proveedorId, p_numero: numero.trim(), p_excluir: editId });
+  return error ? [] : data;   // si falta la función en la base, queda la regla única de la tabla
+}
+
+/** Muestra debajo del N° si ese comprobante ya está cargado (mismo tipo = no deja guardar). */
+async function verificarDuplicado() {
+  const el = document.getElementById("dupAviso");
+  if (!el || !draft) return;
+  const seq = ++dupSeq;
+  const rows = await mismosNumero(draft.proveedorId, draft.numero);
+  if (seq !== dupSeq || !document.getElementById("dupAviso")) return;
+  const fila = (c) => `${fmtDate(c.fecha)} · N° ${esc(c.numero)} · ${fmtMoney(c.monto)} · ${esc(c.sucursal || "")} · ${c.grupo === "FACTURADO" ? "Facturado" : "No facturado"}`;
+  const mismo = rows.filter((c) => c.grupo === draft.grupo), otro = rows.filter((c) => c.grupo !== draft.grupo);
+  document.getElementById("dupAviso").innerHTML =
+    (mismo.length ? `<div class="dup-aviso err"><b>Ya está cargado</b> — no se puede guardar otra vez:${mismo.map((c) => `<div>${fila(c)}</div>`).join("")}</div>` : "")
+    + (otro.length ? `<div class="dup-aviso warn"><b>Ojo:</b> ese número ya existe como ${otro[0].grupo === "FACTURADO" ? "Facturado" : "No facturado"}. Revisá que no sea el mismo:${otro.map((c) => `<div>${fila(c)}</div>`).join("")}</div>` : "");
+}
+
+/** Revisión única: grupos de comprobantes ya cargados con el mismo proveedor y número (admin). */
+async function buscarDuplicados() {
+  dupBuscando = true; render();
+  try {
+    const rows = await fetchAll(() => sb.from("comprobantes").select("*").order("fecha", { ascending: false }));
+    const g = {};
+    for (const c of rows) (g[c.proveedor_id + "|" + numeroNorm(c.numero)] ||= []).push(c);
+    dupGrupos = Object.values(g).filter((x) => x.length > 1);
+  } catch (e) { toast(errorMsg(e)); }
+  dupBuscando = false;
+  if (route === "listado") render();
+}
+
+function seccionDuplicados() {
+  return `<div class="section-label">Posibles duplicados</div>
+  <p class="muted-p">Busca en todas las fechas comprobantes del mismo proveedor con el mismo número (aunque estén escritos distinto). Revisalos y eliminá el que sobre.</p>
+  <button class="btn secondary small mb16" id="btnDuplicados" ${dupBuscando ? "disabled" : ""}>${dupBuscando ? "Buscando…" : dupGrupos ? "Volver a revisar" : "Revisar duplicados"}</button>
+  ${dupGrupos === null ? "" : dupGrupos.length
+    ? dupGrupos.map((grp) => tablaComprobantes(grp)).join(`<div style="height:10px"></div>`)
+    : `<div class="empty-state panel mb26">No hay comprobantes duplicados.</div>`}`;
+}
+
 /** Abre el formulario con los datos de un comprobante para corregirlo (solo admin). */
 function corregirComprobante(id) {
-  const c = comprobantes.find((x) => x.id === id) || hoy.find((x) => x.id === id) || busqResultados?.find((x) => x.id === id);
+  const c = comprobantes.find((x) => x.id === id) || hoy.find((x) => x.id === id) || busqResultados?.find((x) => x.id === id)
+    || dupGrupos?.flat().find((x) => x.id === id);
   if (!c) return;
   draft = {
     grupo: c.grupo, sucursalId: c.sucursal_id, proveedorId: c.proveedor_id, fecha: c.fecha, numero: c.numero,
@@ -470,6 +518,7 @@ async function eliminarComprobante(id) {
   comprobantes = comprobantes.filter((c) => c.id !== id);
   hoy = hoy.filter((c) => c.id !== id);
   if (busqResultados) busqResultados = busqResultados.filter((c) => c.id !== id);
+  if (dupGrupos) dupGrupos = dupGrupos.map((g) => g.filter((c) => c.id !== id)).filter((g) => g.length > 1);
   if (editId === id) { editId = null; draft = null; }
   toast("Comprobante eliminado.");
   return true;
@@ -482,6 +531,9 @@ async function guardarComprobante() {
   if (!sucursalId) { toast("Elegí una sucursal."); return; }
   if (!d.proveedorId) { toast("Elegí o agregá un proveedor."); return; }
   if (!d.numero.trim()) { toast("El número de comprobante es obligatorio."); document.getElementById("f_numero")?.focus(); return; }
+  if ((await mismosNumero(d.proveedorId, d.numero)).some((c) => c.grupo === d.grupo)) {
+    toast("Ese comprobante ya está cargado (mismo proveedor y número)."); verificarDuplicado(); return;
+  }
   if (!d.monto.trim() || isNaN(parseMonto(d.monto))) { toast("Ingresá el monto total."); return; }
   for (const k of ["iva21", "iva105", "iva27", "iva5", "iva25", "iibb"]) {
     if (isNaN(parseMonto(d[k]))) { toast("Revisá los montos de IVA e impuestos."); return; }
@@ -743,6 +795,8 @@ function pageListado() {
   </div>
   `}
 
+  ${esAdmin() ? seccionDuplicados() : ""}
+
   ${esAdmin() ? seccionTributos() : ""}
 
   ${esAdmin() ? `<div class="section-label">Migrar datos de la versión anterior</div>
@@ -950,6 +1004,9 @@ function wirePage() {
     });
     on("btnGuardar", "click", guardarComprobante);
     on("btnCancelarEdit", "click", () => { editId = null; draft = null; render(); });
+    on("f_numero", "input", (e) => { draft.numero = e.target.value; clearTimeout(dupTimer); dupTimer = setTimeout(verificarDuplicado, 500); });
+    on("f_proveedor", "change", (e) => { draft.proveedorId = e.target.value; verificarDuplicado(); });
+    if (draft?.numero?.trim()) verificarDuplicado();
     document.querySelectorAll("input.monto").forEach(wireMonto);
   }
 
@@ -960,6 +1017,7 @@ function wirePage() {
       busqTimer = setTimeout(buscarNumero, 300);
     });
     renderBusq();
+    on("btnDuplicados", "click", buscarDuplicados);
     document.querySelectorAll("[data-range]").forEach((b) => b.addEventListener("click", () => {
       const r = b.dataset.range;
       [desde, hasta] = r === "semana" ? weekRange() : r === "mes" ? monthRange() : yearRange();

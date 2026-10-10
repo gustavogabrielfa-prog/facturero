@@ -138,3 +138,17 @@ export function montoTexto(n) {
   const v = Number(n);
   return v ? v.toLocaleString("es-AR", { maximumFractionDigits: 2 }) : "";
 }
+
+/** Número de comprobante comparable (igual que public.numero_norm en la base):
+ *  con guion, punto de venta a 4 dígitos + número a 8; sin guion, solo dígitos; sin ceros adelante. */
+export function numeroNorm(n) {
+  const t = String(n ?? "");
+  let d;
+  if (t.includes("-")) {
+    const i = t.indexOf("-");
+    const pv = t.slice(0, i).replace(/\D/g, ""), num = t.slice(i + 1).replace(/\D/g, "");
+    d = pv.padStart(4, "0") + num.padStart(8, "0");
+  } else d = t.replace(/\D/g, "");
+  d = d.replace(/^0+/, "");
+  return d || t;
+}
