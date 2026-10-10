@@ -281,6 +281,36 @@ function toast(msg) {
   toastTimer = setTimeout(() => { t.style.display = "none"; }, 2800);
 }
 
+/** Confirmación propia (los confirm/prompt del navegador no se muestran en algunos navegadores integrados).
+ *  Sin `valor`: resuelve true/false. Con `valor`: muestra un campo y resuelve el texto, o null si se cancela. */
+function dialogo(mensaje, { aceptar = "Aceptar", peligro = false, valor } = {}) {
+  return new Promise((resolve) => {
+    const conInput = valor !== undefined;
+    const fondo = document.createElement("div");
+    fondo.className = "dlg-fondo";
+    fondo.innerHTML = `<div class="dlg" role="dialog" aria-modal="true">
+      <p>${esc(mensaje)}</p>
+      ${conInput ? `<input type="text" class="dlg-input" value="${esc(valor)}">` : ""}
+      <div class="dlg-acc">
+        <button class="btn secondary small" data-r="no">Cancelar</button>
+        <button class="btn small${peligro ? " danger" : ""}" data-r="si">${esc(aceptar)}</button>
+      </div></div>`;
+    document.body.appendChild(fondo);
+    const inp = fondo.querySelector(".dlg-input");
+    const cerrar = (ok) => {
+      fondo.remove(); document.removeEventListener("keydown", tecla);
+      resolve(conInput ? (ok ? inp.value : null) : ok);
+    };
+    const tecla = (e) => { if (e.key === "Escape") cerrar(false); if (e.key === "Enter") cerrar(true); };
+    document.addEventListener("keydown", tecla);
+    fondo.addEventListener("click", (e) => { if (e.target === fondo) cerrar(false); });
+    fondo.querySelector("[data-r=no]").addEventListener("click", () => cerrar(false));
+    fondo.querySelector("[data-r=si]").addEventListener("click", () => cerrar(true));
+    (inp || fondo.querySelector("[data-r=si]")).focus();
+    inp?.select();
+  });
+}
+
 /* ---------- PÁGINAS SIMPLES ---------- */
 function pageNoConfig() {
   return `<div class="lock-wrap">
@@ -521,7 +551,7 @@ function corregirComprobante(id) {
 }
 
 async function eliminarComprobante(id) {
-  if (!confirm("¿Eliminar este comprobante?")) return false;
+  if (!(await dialogo("¿Eliminar este comprobante? No se puede deshacer.", { aceptar: "Eliminar", peligro: true }))) return false;
   const { error } = await sb.from("comprobantes").delete().eq("id", id);
   if (error) { toast(errorMsg(error)); return false; }
   comprobantes = comprobantes.filter((c) => c.id !== id);
@@ -853,7 +883,7 @@ async function importarBackup(file) {
     if (!Array.isArray(incoming.proveedores) || !Array.isArray(incoming.comprobantes)) throw new Error();
   } catch { toast("El archivo no parece una copia de seguridad válida."); return; }
 
-  if (!confirm(`Se van a importar ${incoming.comprobantes.length} comprobantes y ${incoming.proveedores.length} proveedores. Los repetidos se ignoran. ¿Continuar?`)) return;
+  if (!(await dialogo(`Se van a importar ${incoming.comprobantes.length} comprobantes y ${incoming.proveedores.length} proveedores. Los repetidos se ignoran. ¿Continuar?`, { aceptar: "Importar" }))) return;
   toast("Importando…");
 
   const norm = (s) => String(s || "").replace(/\D/g, "");
@@ -1068,12 +1098,12 @@ function wirePage() {
     });
     document.querySelectorAll("[data-tribtoggle]").forEach((b) => b.addEventListener("click", async () => {
       const t = state.tributos.find((x) => x.id === b.dataset.tribtoggle);
-      if (t.activo && !confirm(`¿Quitar "${t.nombre}"? Deja de aparecer al cargar; los comprobantes ya cargados lo conservan.`)) return;
+      if (t.activo && !(await dialogo(`¿Quitar "${t.nombre}"? Deja de aparecer al cargar; los comprobantes ya cargados lo conservan.`, { aceptar: "Quitar", peligro: true }))) return;
       await guardarTributo(sb.from("tributos").update({ activo: !t.activo }).eq("id", t.id));
     }));
     document.querySelectorAll("[data-tribren]").forEach((b) => b.addEventListener("click", async () => {
       const t = state.tributos.find((x) => x.id === b.dataset.tribren);
-      const nombre = prompt("Nuevo nombre:", t.nombre)?.trim();
+      const nombre = (await dialogo("Nuevo nombre:", { aceptar: "Guardar", valor: t.nombre }))?.trim();
       if (!nombre || nombre === t.nombre) return;
       await guardarTributo(sb.from("tributos").update({ nombre }).eq("id", t.id));
     }));
@@ -1090,7 +1120,7 @@ function wirePage() {
       if (await crearProveedor(nombre, cuit)) { toast("Proveedor agregado."); render(); }
     });
     document.querySelectorAll("[data-delprov]").forEach((b) => b.addEventListener("click", async () => {
-      if (!confirm("¿Eliminar este proveedor?")) return;
+      if (!(await dialogo("¿Eliminar este proveedor?", { aceptar: "Eliminar", peligro: true }))) return;
       const { error } = await sb.from("proveedores").delete().eq("id", b.dataset.delprov);
       if (error) { toast(errorMsg(error, "proveedor")); return; }
       state.proveedores = state.proveedores.filter((p) => p.id !== b.dataset.delprov);
