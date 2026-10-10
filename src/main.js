@@ -47,7 +47,7 @@ let dupSeq = 0, dupTimer = null;
 let dupGrupos = null;       // revisión de duplicados ya cargados (admin): null = sin revisar
 let dupBuscando = false;
 
-// Control con ARCA (admin): filas del archivo, resultado y comprobantes usados en la comparación
+// Compara ARCA (admin): filas del archivo, resultado y comprobantes usados en la comparación
 let arcaFilas = null, arcaArchivo = "", arcaRes = null, arcaComps = [], arcaCargando = false, arcaError = "";
 let provNuevoPendiente = null;   // { nombre, cuit } para precargar "+ Nuevo" al cargar desde ARCA
 let chartGran = null;   // null = automático según el rango de fechas
@@ -276,7 +276,7 @@ function shell(bodyHtml, logged, tabs = false) {
       <button data-route="subir" class="${route === "subir" ? "active" : ""}">＋ Subir</button>
       <button data-route="proveedores" class="${route === "proveedores" ? "active" : ""}">🏷 Proveedores</button>
       ${veListado() ? `<button data-route="listado" class="${route === "listado" ? "active" : ""}">🗂 Listado</button>` : ""}
-      ${esAdmin() ? `<button data-route="arca" class="${route === "arca" ? "active" : ""}">🧾 ARCA</button>` : ""}
+      ${esAdmin() ? `<button data-route="arca" class="${route === "arca" ? "active" : ""}">🧾 Compara ARCA</button>` : ""}
     </div>` : ""}
     </div>
     ${bodyHtml}
@@ -1064,7 +1064,7 @@ function pageArca() {
   const res = arcaRes;
   const tarjeta = (n, label, cls) => `<div class="arca-kpi ${cls}"><div class="arca-kpi-n">${n}</div><div class="arca-kpi-l">${label}</div></div>`;
   return `
-  <div class="pagehead"><h1 class="serif">Control con ARCA</h1><p>Compará lo cargado en Facturero con las facturas que ARCA tiene registradas a nombre de la farmacia.</p></div>
+  <div class="pagehead"><h1 class="serif">Compara ARCA</h1><p>Compará lo cargado en Facturero con las facturas que ARCA tiene registradas a nombre del negocio.</p></div>
 
   <div class="trip trip2">
   <section class="trip-col">

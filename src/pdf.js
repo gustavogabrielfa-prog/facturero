@@ -60,7 +60,7 @@ export function generarInformeArca({ res, archivo, proveedorNombre, sucursalNomb
   const num = (a) => `${a.pv.padStart(5, "0")}-${a.num.padStart(8, "0")}`;
   const tipo = (nc) => (nc ? "N. crédito" : "Factura");
 
-  doc.setFontSize(16); line("Facturero — Control con ARCA", 8);
+  doc.setFontSize(16); line("Facturero — Compara ARCA", 8);
   doc.setFontSize(10); doc.setTextColor(90);
   line(`Período del archivo: ${fmtDate(res.desde)} a ${fmtDate(res.hasta)}`);
   line(`Archivo: ${archivo}`);
