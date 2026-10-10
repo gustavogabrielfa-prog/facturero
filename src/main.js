@@ -256,7 +256,7 @@ function shell(bodyHtml, logged, tabs = false) {
       : sucursalNombre(state.perfil.sucursal_id)
     : "";
   return `
-  <div class="wrap${logged && (route === "listado" || route === "subir") ? " ancho ruta-" + route : ""}">
+  <div class="wrap${logged && (route === "listado" || route === "subir" || route === "proveedores") ? " ancho ruta-" + route : ""}">
     <div class="pivote">
     <header class="top">
       <div class="brand"><div class="brand-mark">F</div><div class="brand-name">Facturero</div></div>
@@ -972,6 +972,9 @@ async function importarBackup(file) {
 function pageProveedores() {
   return `
   <div class="pagehead"><h1 class="serif">Proveedores</h1><p>Agregá los proveedores una vez y quedan disponibles para todas las sucursales.</p></div>
+  <div class="trip trip-prov">
+  <section class="trip-col fija">
+  <div class="trip-h">1 · Agregar proveedor</div>
   <div class="panel" style="margin-bottom:20px;">
     <div class="row2">
       <div class="field" style="margin-bottom:12px;"><label>Nombre</label><input type="text" id="pv_nombre" placeholder="Ej: Droguería del Sud"></div>
@@ -979,6 +982,10 @@ function pageProveedores() {
     </div>
     <button class="btn small" id="btnAddProv">+ Agregar proveedor</button>
   </div>
+  </section>
+  <section class="trip-col">
+  <div class="trip-h">2 · Proveedores (${state.proveedores.length})</div>
+  <div class="prov-grid">
   ${state.proveedores.length ? state.proveedores.map((p) => `
     <div class="card">
       <div class="card-icon">🏷</div>
@@ -987,7 +994,10 @@ function pageProveedores() {
         <div class="card-sub">${p.cuit ? "CUIT " + esc(p.cuit) : "Sin CUIT cargado"}</div>
       </div>
       ${esAdmin() ? `<button class="btn secondary small" data-delprov="${p.id}">Eliminar</button>` : ""}
-    </div>`).join("") : `<div class="empty-state panel"><span class="serif">Sin proveedores</span>Agregá el primero arriba.</div>`}
+    </div>`).join("") : `<div class="empty-state panel"><span class="serif">Sin proveedores</span>Agregá el primero.</div>`}
+  </div>
+  </section>
+  </div>
   `;
 }
 
