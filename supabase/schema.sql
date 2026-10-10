@@ -41,7 +41,7 @@ create table if not exists public.perfiles (
 create table if not exists public.proveedores (
   id          uuid primary key default gen_random_uuid(),
   nombre      text not null check (length(trim(nombre)) > 0),
-  cuit        text unique check (cuit is null or cuit ~ '^\d{2}-?\d{8}-?\d$'),
+  cuit        text unique check (cuit is null or cuit ~ '^\d{2}-\d{8}-\d$'),
   created_by  uuid default auth.uid() references auth.users (id) on delete set null,
   created_at  timestamptz not null default now()
 );

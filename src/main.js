@@ -403,7 +403,7 @@ function pageSubir() {
     <div class="newprov">
       <div class="row2">
         <div class="field" style="margin-bottom:0;"><label>Nombre del proveedor</label><input type="text" id="np_nombre" placeholder="Ej: Droguería..."></div>
-        <div class="field" style="margin-bottom:0;"><label>CUIT</label><input type="text" id="np_cuit" placeholder="30-XXXXXXXX-X"></div>
+        <div class="field" style="margin-bottom:0;"><label>CUIT</label><input type="text" id="np_cuit" class="cuit" inputmode="numeric" autocomplete="off" maxlength="13" placeholder="30-12345678-9"></div>
       </div>
       <div class="newprov-actions">
         <button class="btn small" id="btnGuardarProv">Guardar proveedor</button>
@@ -495,7 +495,18 @@ function syncDraft() {
   document.querySelectorAll("[data-trib]").forEach((el) => { draft.tributos[el.dataset.trib] = el.value; });
 }
 
+/** CUIT con guiones mientras se escribe: 30-12345678-9 */
+function cuitTexto(v) {
+  const d = String(v).replace(/D/g, "").slice(0, 11);
+  return d.length > 10 ? `${d.slice(0, 2)}-${d.slice(2, 10)}-${d.slice(10)}` : d.length > 2 ? `${d.slice(0, 2)}-${d.slice(2)}` : d;
+}
+function wireCuit(el) {
+  el.addEventListener("input", () => { el.value = cuitTexto(el.value); });
+}
+
 async function crearProveedor(nombre, cuit) {
+  cuit = cuitTexto(cuit || "");
+  if (cuit && !/^d{2}-d{8}-d$/.test(cuit)) { toast("El CUIT tiene que tener 11 números (ej: 30-12345678-9)."); return null; }
   const { data, error } = await sb.from("proveedores").insert({ nombre, cuit: cuit || null }).select().single();
   if (error) { toast(errorMsg(error, "proveedor")); return null; }
   state.proveedores.push(data);
@@ -978,7 +989,7 @@ function pageProveedores() {
   <div class="panel" style="margin-bottom:20px;">
     <div class="row2">
       <div class="field" style="margin-bottom:12px;"><label>Nombre</label><input type="text" id="pv_nombre" placeholder="Ej: Droguería del Sud"></div>
-      <div class="field" style="margin-bottom:12px;"><label>CUIT</label><input type="text" id="pv_cuit" placeholder="30-XXXXXXXX-X"></div>
+      <div class="field" style="margin-bottom:12px;"><label>CUIT</label><input type="text" id="pv_cuit" class="cuit" inputmode="numeric" autocomplete="off" maxlength="13" placeholder="30-12345678-9"></div>
     </div>
     <button class="btn small" id="btnAddProv">+ Agregar proveedor</button>
   </div>
@@ -1087,6 +1098,7 @@ function wirePage() {
     on("f_proveedor", "change", (e) => { draft.proveedorId = e.target.value; verificarDuplicado(); });
     if (draft?.numero?.trim()) verificarDuplicado();
     document.querySelectorAll("input.monto").forEach(wireMonto);
+    document.querySelectorAll("input.cuit").forEach(wireCuit);
   }
 
   if (route === "listado") {
@@ -1150,6 +1162,7 @@ function wirePage() {
   }
 
   if (route === "proveedores") {
+    document.querySelectorAll("input.cuit").forEach(wireCuit);
     on("btnAddProv", "click", async () => {
       const nombre = document.getElementById("pv_nombre").value.trim();
       const cuit = document.getElementById("pv_cuit").value.trim();
