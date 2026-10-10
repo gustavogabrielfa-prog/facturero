@@ -258,3 +258,19 @@ body[data-mode="NOTA_CREDITO"] .pivote{background:var(--danger-bg);}
   .trip3 .hoy-table td:first-child, .trip3 .hoy-table th:first-child{min-width:110px;}
   .trip3 .hoy-acc{flex-direction:column; gap:4px;}
 }
+.grid-campos{display:grid; grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); column-gap:10px;}
+@media (min-width:1100px){
+  /* El menú usa todo el ancho del contenido */
+  .wrap.ancho .pivote{max-width:none; width:100%; margin:0;}
+  /* Subir: la página no se mueve; solo "Cargados hoy" tiene su propio desplazamiento */
+  .wrap.ruta-subir{height:100vh; box-sizing:border-box; display:flex; flex-direction:column; padding-bottom:12px; overflow:hidden;}
+  .wrap.ruta-subir > .pagehead{margin-bottom:12px;}
+  .wrap.ruta-subir > .trip3{flex:1; min-height:0; align-items:stretch;}
+  .wrap.ruta-subir .trip-col, .wrap.ruta-subir .trip-col.fija{position:static; max-height:none; height:100%; overflow-y:auto; padding:0 6px 6px 2px;}
+  .wrap.ruta-subir > .app-footer{display:none;}
+  .wrap.ruta-subir .field{margin-bottom:12px;}
+  .wrap.ruta-subir .field input, .wrap.ruta-subir .field select{padding:9px 11px;}
+  .wrap.ruta-subir .section-label{margin:10px 0 8px; padding-top:10px;}
+  .wrap.ruta-subir .badge-group{margin-bottom:14px;}
+  .wrap.ruta-subir .nc-check{margin:-2px 0 12px; padding:8px 12px;}
+}

@@ -256,7 +256,7 @@ function shell(bodyHtml, logged, tabs = false) {
       : sucursalNombre(state.perfil.sucursal_id)
     : "";
   return `
-  <div class="wrap${logged && (route === "listado" || route === "subir") ? " ancho" : ""}">
+  <div class="wrap${logged && (route === "listado" || route === "subir") ? " ancho ruta-" + route : ""}">
     <div class="pivote">
     <header class="top">
       <div class="brand"><div class="brand-mark">F</div><div class="brand-name">Facturero</div></div>
@@ -426,15 +426,12 @@ function pageSubir() {
   <section class="trip-col fija">
   <div class="trip-h">2 · Impuestos y guardar</div>
   <div class="section-label primera">IVA por alícuota — dejá en 0 la que no aplique (ej. medicamento exento)</div>
-  <div class="row2">${ivaField("iva21", "IVA 21%")}${ivaField("iva105", "IVA 10,5%")}</div>
-  <div class="row2">${ivaField("iva27", "IVA 27%")}${ivaField("iva5", "IVA 5%")}</div>
-  ${ivaField("iva25", "IVA 2,5%")}
+  <div class="grid-campos">${ivaField("iva21", "IVA 21%")}${ivaField("iva105", "IVA 10,5%")}${ivaField("iva27", "IVA 27%")}${ivaField("iva5", "IVA 5%")}${ivaField("iva25", "IVA 2,5%")}</div>
 
   <div class="section-label">Otros impuestos</div>
-  ${ivaField("iibb", "Ingresos Brutos (Misiones)")}
-  ${tributosActivos().length ? `<div class="row2">${tributosActivos().map((t) => `<div class="field"><label>${esc(t.nombre)}</label><input type="text" inputmode="decimal" autocomplete="off" class="monto" data-trib="${t.id}" value="${esc(d.tributos?.[t.id] ?? "")}" placeholder="0"></div>`).join("")}</div>` : ""}
+  <div class="grid-campos">${ivaField("iibb", "IIBB (Misiones)")}${tributosActivos().map((t) => `<div class="field"><label>${esc(t.nombre)}</label><input type="text" inputmode="decimal" autocomplete="off" class="monto" data-trib="${t.id}" value="${esc(d.tributos?.[t.id] ?? "")}" placeholder="0"></div>`).join("")}</div>
 
-  <div class="field"><label>Notas (opcional)</label><textarea id="f_notas">${esc(d.notas)}</textarea></div>
+  <div class="field"><label>Notas (opcional)</label><textarea id="f_notas" rows="2">${esc(d.notas)}</textarea></div>
 
   <button class="btn" id="btnGuardar" ${saving ? "disabled" : ""}>${saving ? "Guardando…" : editId ? "Guardar cambios" : "Guardar comprobante"}</button>
   ${editId ? `<button class="btn secondary" id="btnCancelarEdit" style="margin-top:10px;">Cancelar corrección</button>` : ""}
