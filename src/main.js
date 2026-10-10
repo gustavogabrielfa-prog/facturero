@@ -346,11 +346,7 @@ function pageSubir() {
     <button data-grupo="FACTURADO" class="${d.grupo === "FACTURADO" ? "active fact" : ""}">Facturado</button>
     <button data-grupo="NO_FACTURADO" class="${d.grupo === "NO_FACTURADO" ? "active nofact" : ""}">No facturado</button>
   </div>
-  <div class="badge-group tipo-toggle" id="tipoToggle">
-    <button data-tipo="FACTURA" class="${d.tipo !== "NOTA_CREDITO" ? "active" : ""}">Factura</button>
-    <button data-tipo="NOTA_CREDITO" class="${d.tipo === "NOTA_CREDITO" ? "active nc" : ""}">Nota de crédito</button>
-  </div>
-  ${d.tipo === "NOTA_CREDITO" ? `<div class="nc-aviso">Nota de crédito: cargá los importes en positivo, la app los <b>resta</b> de los totales.</div>` : ""}
+
 
   ${esAdmin() ? `<div class="field"><label>Sucursal</label>
     <select id="f_sucursal">${state.sucursales.map((s) => `<option value="${s.id}" ${d.sucursalId === s.id ? "selected" : ""}>${esc(s.nombre)}</option>`).join("")}</select>
@@ -378,6 +374,9 @@ function pageSubir() {
       </div>
     </div>` : ""}
   </div>
+
+  <label class="nc-check${d.tipo === "NOTA_CREDITO" ? " on" : ""}"><input type="checkbox" id="f_nc" ${d.tipo === "NOTA_CREDITO" ? "checked" : ""}> Es nota de crédito de este proveedor</label>
+  ${d.tipo === "NOTA_CREDITO" ? `<div class="nc-aviso">Cargá los importes en positivo: la app los <b>resta</b> de los totales.</div>` : ""}
 
   <div class="row2">
     <div class="field"><label>Fecha</label><input type="date" id="f_fecha" value="${esc(d.fecha)}"></div>
@@ -1002,8 +1001,7 @@ function wirePage() {
   if (route === "subir") {
     document.querySelectorAll("#grupoToggle button").forEach((btn) =>
       btn.addEventListener("click", () => { syncDraft(); draft.grupo = btn.dataset.grupo; render(); }));
-    document.querySelectorAll("#tipoToggle button").forEach((btn) =>
-      btn.addEventListener("click", () => { syncDraft(); draft.tipo = btn.dataset.tipo; render(); }));
+    on("f_nc", "change", (e) => { syncDraft(); draft.tipo = e.target.checked ? "NOTA_CREDITO" : "FACTURA"; render(); });
     on("btnNuevoProv", "click", () => { syncDraft(); showNewProv = !showNewProv; render(); if (showNewProv) document.getElementById("np_nombre")?.focus(); });
     on("btnCancelarProv", "click", () => { syncDraft(); showNewProv = false; render(); });
     on("btnGuardarProv", "click", async () => {
