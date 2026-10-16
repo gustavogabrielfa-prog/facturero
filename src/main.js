@@ -148,18 +148,17 @@ function renderBusq() {
   }));
 }
 
-/** Comprobantes cargados hoy por el usuario actual. RLS además los limita al día (hora Argentina). */
+/** Comprobantes cargados hoy: admin ve todas las sucursales; gerente y carga, solo la suya (RLS además los limita al día, hora Argentina). */
 async function loadHoy() {
   const d = new Date();
   const medianoche = new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString();
   const seq = hoyDia = todayISO();
   try {
-    const rows = await fetchAll(() =>
-      sb.from("comprobantes").select("*")
-        .eq("created_by", state.session.user.id)
-        .gte("created_at", medianoche)
-        .order("created_at", { ascending: false })
-    );
+    const rows = await fetchAll(() => {
+      let q = sb.from("comprobantes").select("*").gte("created_at", medianoche);
+      if (!esAdmin()) q = q.eq("sucursal_id", state.perfil.sucursal_id);
+      return q.order("created_at", { ascending: false });
+    });
     if (seq !== hoyDia) return;
     hoy = rows; hoyLoaded = true;
     renderHoy();
@@ -198,7 +197,7 @@ function refrescarListado() {
 }
 function subscribeRealtime() {
   if (channel) return;
-  // Los eventos de comprobantes llegan al admin y al gerente de esa sucursal (Realtime respeta RLS)
+  // Los eventos de comprobantes llegan al admin y a los usuarios de esa sucursal (Realtime respeta RLS)
   channel = sb.channel("facturero-cambios")
     .on("postgres_changes", { event: "*", schema: "public", table: "comprobantes" }, refrescarListado)
     .on("postgres_changes", { event: "*", schema: "public", table: "proveedores" }, loadProveedores)
@@ -426,7 +425,7 @@ function pageSubir() {
   ${d.tipo === "NOTA_CREDITO" ? `<div class="nc-aviso">Cargá los importes en positivo: la app los <b>resta</b> de los totales.</div>` : ""}
 
   <div class="row2">
-    <div class="field"><label>Fecha</label><input type="date" id="f_fecha" value="${esc(d.fecha)}"></div>
+    <div class="field"><label>Fecha</label><input type="date" id="f_fecha" value="${esc(d.fecha)}" max="${todayISO()}"></div>
     <div class="field"><label>Número de comprobante *</label><input type="text" id="f_numero" value="${esc(d.numero)}" placeholder="0001-00012345"><div id="dupAviso"></div></div>
   </div>
   ${d.tipo === "NOTA_CREDITO" ? `<div class="field"><label>Factura que afecta (opcional)</label><input type="text" id="f_facturaRef" value="${esc(d.facturaRef)}" placeholder="0001-00012345"></div>` : ""}
@@ -468,7 +467,7 @@ function tablaComprobantes(list, { conHora = false, delAttr = "data-del", iconos
       const extra = [nc && c.factura_ref ? "Afecta a N° " + esc(c.factura_ref) : "", trib > 0 ? "Otros tributos " + $(c, trib) : "", c.notas ? esc(c.notas) : ""].filter(Boolean).join(" · ");
       return `<tr${nc ? ` class="nc-row"` : ""}>
       <td><span class="${c.grupo === "FACTURADO" ? "fact" : "nofact"}" title="${c.grupo === "FACTURADO" ? "Facturado" : "No facturado"}">●</span> ${esc(proveedorNombre(c.proveedor_id))}${nc ? ` <span class="nc-tag">Nota de crédito</span>` : ""}
-        <small>${conHora ? hora(c.created_at) + " hs · " : ""}N° ${esc(c.numero)} · ${fmtDate(c.fecha)}${esAdmin() ? " · " + esc(sucursalNombre(c.sucursal_id)) : ""}</small>
+        <small>${conHora ? hora(c.created_at) + " hs · " : ""}N° ${esc(c.numero)} · ${fmtDate(c.fecha)}${esAdmin() ? " · " + esc(sucursalNombre(c.sucursal_id)) : ""}${c.cargado_por ? ` · <span class="quien" title="Cargado por">${esc(c.cargado_por)}</span>` : ""}</small>
         ${extra ? `<small>${extra}</small>` : ""}</td>
       <td class="tot">${$(c, c.monto)}</td>
       <td>${$(c, iva(c))}</td>
@@ -486,7 +485,7 @@ function renderHoy() {
   const el = document.getElementById("hoyList");
   if (!el) return;
   if (!hoy.length) {
-    el.innerHTML = `<div class="empty-state panel" style="padding:26px 20px;">Todavía no cargaste comprobantes hoy.<br>Se reinicia todos los días a las 00:00.</div>`;
+    el.innerHTML = `<div class="empty-state panel" style="padding:26px 20px;">Todavía no se cargaron comprobantes hoy${esAdmin() ? "" : " en esta sucursal"}.<br>Se reinicia todos los días a las 00:00.</div>`;
     return;
   }
   el.innerHTML = tablaComprobantes(hoy, { conHora: true, delAttr: "data-delhoy", iconos: true });   // sin suma del día
@@ -604,6 +603,8 @@ async function guardarComprobante() {
   const sucursalId = esAdmin() ? d.sucursalId : state.perfil.sucursal_id;
   if (!sucursalId) { toast("Elegí una sucursal."); return; }
   if (!d.proveedorId) { toast("Elegí o agregá un proveedor."); return; }
+  if (!d.fecha) { toast("Ingresá la fecha del comprobante."); document.getElementById("f_fecha")?.focus(); return; }
+  if (d.fecha > todayISO()) { toast("La fecha no puede ser posterior a hoy."); document.getElementById("f_fecha")?.focus(); return; }
   if (!d.numero.trim()) { toast("El número de comprobante es obligatorio."); document.getElementById("f_numero")?.focus(); return; }
   if ((await mismosNumero(d.proveedorId, d.numero)).some((c) => c.grupo === d.grupo && (c.tipo || "FACTURA") === (d.tipo || "FACTURA"))) {
     toast("Ese comprobante ya está cargado (mismo proveedor y número)."); verificarDuplicado(); return;

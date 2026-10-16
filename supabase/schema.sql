@@ -175,7 +175,7 @@ create policy proveedores_admin_delete on public.proveedores
   for delete to authenticated using ((select public.es_admin()));
 
 -- comprobantes:
---   carga  -> INSERT en su propia sucursal; solo ve lo que cargó hoy (no ve listado ni totales)
+--   carga  -> INSERT en su propia sucursal; ve lo cargado hoy en su sucursal (no ve listado ni totales)
 --   gerente-> ve, inserta, corrige y elimina solo en su sucursal
 --   admin  -> todo
 drop policy if exists comprobantes_admin_select on public.comprobantes;
@@ -193,6 +193,16 @@ create policy comprobantes_propios_hoy on public.comprobantes
   for select to authenticated
   using (
     created_by = (select auth.uid())
+    and created_at >= (date_trunc('day', now() at time zone 'America/Argentina/Buenos_Aires')
+                       at time zone 'America/Argentina/Buenos_Aires')
+  );
+
+-- cualquier usuario ve lo que se cargó HOY en su sucursal: "Cargados hoy" compartido
+drop policy if exists comprobantes_sucursal_hoy on public.comprobantes;
+create policy comprobantes_sucursal_hoy on public.comprobantes
+  for select to authenticated
+  using (
+    sucursal_id = (select public.mi_sucursal())
     and created_at >= (date_trunc('day', now() at time zone 'America/Argentina/Buenos_Aires')
                        at time zone 'America/Argentina/Buenos_Aires')
   );
@@ -311,3 +321,44 @@ on conflict (nombre) do nothing;
 -- update public.perfiles
 --   set sucursal_id = (select id from public.sucursales where nombre = 'Farmacia Argus 2')
 --   where email = 'argus2@ejemplo.com';
+
+-- ---------------------------------------------------------------------
+-- Fecha no posterior a hoy y sigla de quien cargó (migración 010)
+-- ---------------------------------------------------------------------
+-- Sigla de cada usuario: admin = AD; el resto, lo que va antes de la @ (a2@... = A2)
+alter table public.perfiles add column if not exists sigla text;
+update public.perfiles
+  set sigla = case when rol::text = 'admin' then 'AD' else upper(split_part(email, '@', 1)) end
+  where sigla is null;
+
+alter table public.comprobantes add column if not exists cargado_por text;
+
+create or replace function public.comprobantes_antes_de_guardar()
+returns trigger
+language plpgsql security definer set search_path = ''
+as $$
+begin
+  if (tg_op = 'INSERT' or new.fecha is distinct from old.fecha)
+     and new.fecha > (now() at time zone 'America/Argentina/Buenos_Aires')::date then
+    raise exception 'La fecha no puede ser posterior a hoy.';
+  end if;
+  if tg_op = 'INSERT' then
+    new.cargado_por := (select p.sigla from public.perfiles p where p.id = auth.uid());
+  else
+    new.cargado_por := old.cargado_por;   -- corregir no cambia quién lo cargó
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists comprobantes_antes_de_guardar on public.comprobantes;
+create trigger comprobantes_antes_de_guardar
+  before insert or update on public.comprobantes
+  for each row execute function public.comprobantes_antes_de_guardar();
+
+-- Completar los ya cargados con la sigla actual (si corregís una sigla, volvé a ejecutar este archivo).
+-- El trigger conserva cargado_por en UPDATE, así que se desactiva un momento.
+alter table public.comprobantes disable trigger comprobantes_antes_de_guardar;
+update public.comprobantes c set cargado_por = p.sigla
+  from public.perfiles p where p.id = c.created_by;
+alter table public.comprobantes enable trigger comprobantes_antes_de_guardar;

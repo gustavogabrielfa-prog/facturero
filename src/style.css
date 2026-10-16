@@ -315,3 +315,4 @@ header.top{padding:2px 0 8px;}
 .tabs button{padding:9px 8px;}
 .pagehead{margin-bottom:12px;}
 .pagehead h1{font-size:21px; margin-bottom:2px;}
+.quien{display:inline-block; font-size:10.5px; font-weight:700; color:var(--ink); border:1px solid var(--muted); border-radius:4px; padding:0 5px; line-height:1.5;}
