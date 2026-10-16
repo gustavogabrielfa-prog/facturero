@@ -41,7 +41,7 @@ let hoy = [];
 let hoyLoaded = false;
 let hoyDia = todayISO();   // si cambia (pasó la medianoche), se vacía
 let provFilter = "todos";
-let busqueda = "";          // N° de comprobante a buscar (en todas las fechas)
+let busqueda = "";          // N° de comprobante, proveedor o importe a buscar (en todas las fechas)
 let busqResultados = null;  // null = buscando
 let busqSeq = 0, busqTimer = null;
 let dupSeq = 0, dupTimer = null;
@@ -111,13 +111,39 @@ async function loadComprobantes({ silent = false } = {}) {
   }
 }
 
+/** Importe escrito como "120.500,00", "$ 120500" o "120500.5"; null si no parece un importe. */
+function importeBuscado(s) {
+  const t = s.replace(/[$\s]/g, "");
+  if (!/^\d[\d.,]*$/.test(t)) return null;
+  let n;
+  if (t.includes(",")) n = Number(t.replace(/\./g, "").replace(",", "."));
+  else if (/\.\d{3}(\.|$)/.test(t)) n = Number(t.replace(/\./g, ""));   // puntos de miles
+  else n = Number(t);
+  if (!isFinite(n) || n <= 0) return null;
+  return { n, conDecimales: /[.,]\d{1,2}$/.test(t) && !/\.\d{3}$/.test(t) };
+}
+const sinAcentos = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+/** Busca en todas las fechas por N° de comprobante, nombre de proveedor o importe total. */
 async function buscarNumero() {
-  const t = busqueda.trim().replace(/[^\w-]/g, "");
+  const texto = busqueda.trim();
+  const t = texto.replace(/[^\w-]/g, "");
   const seq = ++busqSeq;
   busqResultados = null; renderBusq();
-  if (!t) return;
+  if (!texto) return;
+  const cond = [];
+  if (t) cond.push(`numero.ilike.*${t}*`);
+  const q = sinAcentos(texto);
+  if (q.length >= 3) {
+    const ids = state.proveedores.filter((p) => sinAcentos(p.nombre).includes(q)).map((p) => p.id);
+    if (ids.length) cond.push(`proveedor_id.in.(${ids.join(",")})`);
+  }
+  const imp = importeBuscado(texto);
+  // sin decimales: cualquier importe de ese entero (120500 encuentra 120.500,75)
+  if (imp) cond.push(imp.conDecimales ? `monto.eq.${imp.n}` : `and(monto.gte.${Math.floor(imp.n)},monto.lt.${Math.floor(imp.n) + 1})`);
+  if (!cond.length) { busqResultados = []; renderBusq(); return; }
   const { data, error } = await sb.from("comprobantes").select("*")
-    .ilike("numero", `%${t}%`).order("fecha", { ascending: false }).limit(50);
+    .or(cond.join(",")).order("fecha", { ascending: false }).limit(50);
   if (seq !== busqSeq) return;
   if (error) toast(errorMsg(error));
   busqResultados = error ? [] : data;
@@ -130,7 +156,7 @@ function busqHtml() {
   const n = busqResultados.length;
   return `<div class="busq-info">${n}${n === 50 ? "+" : ""} resultado${n === 1 ? "" : "s"} en todas las fechas · <button type="button" class="linkbtn" data-limpiar>Limpiar búsqueda</button></div>
   ${n ? tablaComprobantes(busqResultados, { delAttr: "data-delbusq" })
-    : `<div class="empty-state panel"><span class="serif">Sin resultados</span>No hay comprobantes con ese número.</div>`}`;
+    : `<div class="empty-state panel"><span class="serif">Sin resultados</span>No hay comprobantes que coincidan con la búsqueda.</div>`}`;
 }
 
 /** Pinta resultados y oculta el historial normal mientras hay búsqueda. */
@@ -898,8 +924,8 @@ function pageListado() {
   <section class="comp-full">
   <div class="trip-h">3 · Comprobantes</div>
   <div class="field busq" style="margin-bottom:12px;">
-    <label>Buscar por N° de comprobante</label>
-    <input type="search" id="fBusq" inputmode="search" autocomplete="off" placeholder="Ej: 031700020301" value="${esc(busqueda)}">
+    <label>Buscar por N° de comprobante, proveedor o importe</label>
+    <input type="search" id="fBusq" inputmode="search" autocomplete="off" placeholder="Ej: 031700020301 · Del Sud · 120.500,00" value="${esc(busqueda)}">
   </div>
   <div id="busqRes">${busqHtml()}</div>
   <div id="histNormal" ${busqueda.trim() ? "hidden" : ""}>
