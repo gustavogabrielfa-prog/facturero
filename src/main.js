@@ -5,7 +5,7 @@ import {
   IMPUESTOS, computeTotals, groupBy, groupByPeriod, periodLabel,
   periodKey, periodKeysBetween, periodShort, fmtCompact, parseMonto, formatMontoTexto, montoTexto, numeroNorm, signo,
 } from "./format.js";
-import { generarReportePDF, generarInformeArca } from "./pdf.js";
+import { generarReportePDF, generarReporteExcel, generarInformeArca } from "./pdf.js";
 import { leerArchivoArca, compararArca, rangoArca } from "./arca.js";
 
 /* ---------- STATE ---------- */
@@ -687,6 +687,11 @@ function tablaResumen(rows, labelFn) {
   </table>`;
 }
 
+/** Rangos de los botones rápidos del Listado. */
+function rangoRapido(r) {
+  return r === "hoy" ? [todayISO(), todayISO()] : r === "semana" ? weekRange() : r === "mes" ? monthRange() : yearRange();
+}
+
 function listaFiltrada() {
   if (esGerente()) return comprobantes.filter((c) => c.sucursal_id === state.perfil.sucursal_id);
   return sucursalFilter === "todas" ? comprobantes : comprobantes.filter((c) => c.sucursal_id === sucursalFilter);
@@ -836,9 +841,10 @@ function pageListado() {
   <div class="trip-h">1 · Período y totales</div>
   <div class="panel mb16" style="padding:16px;">
     <div class="filters">
-      <button data-range="semana">Esta semana</button>
-      <button data-range="mes">Este mes</button>
-      <button data-range="año">Este año</button>
+      ${[["hoy", "Hoy"], ["semana", "Esta semana"], ["mes", "Este mes"], ["año", "Este año"]].map(([r, l]) => {
+        const [d, h] = rangoRapido(r);
+        return `<button data-range="${r}" class="${d === desde && h === hasta ? "active" : ""}">${l}</button>`;
+      }).join("")}
     </div>
     <div class="row2">
       <div class="field" style="margin-bottom:12px;"><label>Desde</label><input type="date" id="fDesde" value="${desde}"></div>
@@ -851,7 +857,10 @@ function pageListado() {
     <div style="display:flex; gap:8px; flex-wrap:wrap;">
       <button class="btn small" id="btnAplicar">Actualizar</button>
       <button class="btn secondary small" id="btnGenPDF" ${listLoading ? "disabled" : ""}>📄 PDF del período</button>
+      <button class="btn secondary small" id="btnGenXls" ${listLoading ? "disabled" : ""}>📊 Excel del período</button>
     </div>
+    <div class="alcance-actual">Mostrando: <b>${desde === hasta ? fmtDate(desde) : `${fmtDate(desde)} al ${fmtDate(hasta)}`}</b> · <b>${esc(esGerente()
+      ? sucursalNombre(state.perfil.sucursal_id) : sucursalFilter === "todas" ? "Todas las sucursales" : sucursalNombre(sucursalFilter))}</b></div>
   </div>
 
   ${listLoading ? cargando : `
@@ -1305,10 +1314,19 @@ function wirePage() {
     renderBusq();
     on("btnDuplicados", "click", buscarDuplicados);
     document.querySelectorAll("[data-range]").forEach((b) => b.addEventListener("click", () => {
-      const r = b.dataset.range;
-      [desde, hasta] = r === "semana" ? weekRange() : r === "mes" ? monthRange() : yearRange();
+      [desde, hasta] = rangoRapido(b.dataset.range);
       loadComprobantes();
     }));
+    // Las fechas se aplican apenas se cambian: así elegir sucursal después no las pierde
+    const aplicarFechas = (cambio) => {
+      let d = document.getElementById("fDesde").value, h = document.getElementById("fHasta").value;
+      if (!d || !h) return;
+      if (d > h) { if (cambio === "desde") h = d; else d = h; }   // un solo día si se cruzan
+      if (d === desde && h === hasta) return;
+      desde = d; hasta = h; loadComprobantes();
+    };
+    on("fDesde", "change", () => aplicarFechas("desde"));
+    on("fHasta", "change", () => aplicarFechas("hasta"));
     on("btnAplicar", "click", () => {
       const d = document.getElementById("fDesde").value, h = document.getElementById("fHasta").value;
       if (!d || !h || d > h) { toast("Revisá el rango de fechas."); return; }
@@ -1327,13 +1345,19 @@ function wirePage() {
       if (await eliminarComprobante(b.dataset.del)) render();
     }));
     document.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => corregirComprobante(b.dataset.edit)));
-    on("btnGenPDF", "click", () => {
-      generarReportePDF({
-        list: listaFiltrada(), desde, hasta,
-        alcance: esGerente() ? sucursalNombre(state.perfil.sucursal_id)
-          : sucursalFilter === "todas" ? "Todas las sucursales" : sucursalNombre(sucursalFilter),
-        proveedorNombre, sucursalNombre, tributoNombre,
-      });
+    // El reporte sale con los mismos filtros que se ven en pantalla (sucursal, facturado / no facturado, proveedor)
+    const datosReporte = () => {
+      let list = listaFiltrada();
+      const alcance = [esGerente() ? sucursalNombre(state.perfil.sucursal_id)
+        : sucursalFilter === "todas" ? "Todas las sucursales" : sucursalNombre(sucursalFilter)];
+      if (listFilter === "facturado") { list = list.filter((c) => c.grupo === "FACTURADO"); alcance.push("Solo facturado"); }
+      if (listFilter === "nofacturado") { list = list.filter((c) => c.grupo === "NO_FACTURADO"); alcance.push("Solo no facturado"); }
+      if (provFilter !== "todos") { list = list.filter((c) => c.proveedor_id === provFilter); alcance.push(proveedorNombre(provFilter)); }
+      return { list, desde, hasta, alcance: alcance.join(" · "), proveedorNombre, sucursalNombre, tributoNombre };
+    };
+    on("btnGenPDF", "click", () => generarReportePDF(datosReporte()));
+    on("btnGenXls", "click", async () => {
+      try { await generarReporteExcel(datosReporte()); } catch (e) { toast("No se pudo generar el Excel."); console.error(e); }
     });
     on("btnTribAdd", "click", async () => {
       const nombre = document.getElementById("tribNuevo").value.trim();

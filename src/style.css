@@ -326,3 +326,5 @@ header.top{padding:2px 0 8px;}
 .sw.muestra{background-color:var(--muted);}
 .prov-name .sw{margin-right:7px;}
 .chart-head .chart-legend{flex-wrap:wrap;}
+.alcance-actual{margin-top:12px; padding:8px 10px; border-radius:5px; background:var(--paper); border:1px solid var(--line); font-size:13px; color:var(--muted);}
+.alcance-actual b{color:var(--ink);}
