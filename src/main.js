@@ -126,11 +126,22 @@ const sinAcentos = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase
 
 /** Busca en todas las fechas por N° de comprobante, nombre de proveedor o importe total. */
 async function buscarNumero() {
-  const texto = busqueda.trim();
+  // "nota de crédito", "nota", "crédito" o "nc" filtran notas de crédito; lo que quede se busca normal ("nc monroe")
+  const NC = /\b(notas?\s+de\s+cr[eé]ditos?|notas?|cr[eé]ditos?|n\.?\s?c\.?)(?=\s|$)/gi;
+  const soloNC = NC.test(busqueda); NC.lastIndex = 0;
+  const texto = busqueda.replace(NC, " ").replace(/\s+/g, " ").trim();
   const t = texto.replace(/[^\w-]/g, "");
   const seq = ++busqSeq;
   busqResultados = null; renderBusq();
-  if (!texto) return;
+  if (!busqueda.trim()) return;
+  if (soloNC && !texto) {
+    const { data, error } = await sb.from("comprobantes").select("*")
+      .eq("tipo", "NOTA_CREDITO").order("fecha", { ascending: false }).limit(50);
+    if (seq !== busqSeq) return;
+    if (error) toast(errorMsg(error));
+    busqResultados = error ? [] : data;
+    renderBusq(); return;
+  }
   const cond = [];
   if (t) cond.push(`numero.ilike.*${t}*`);
   const q = sinAcentos(texto);
@@ -142,8 +153,9 @@ async function buscarNumero() {
   // sin decimales: cualquier importe de ese entero (120500 encuentra 120.500,75)
   if (imp) cond.push(imp.conDecimales ? `monto.eq.${imp.n}` : `and(monto.gte.${Math.floor(imp.n)},monto.lt.${Math.floor(imp.n) + 1})`);
   if (!cond.length) { busqResultados = []; renderBusq(); return; }
-  const { data, error } = await sb.from("comprobantes").select("*")
-    .or(cond.join(",")).order("fecha", { ascending: false }).limit(50);
+  let consulta = sb.from("comprobantes").select("*").or(cond.join(","));
+  if (soloNC) consulta = consulta.eq("tipo", "NOTA_CREDITO");
+  const { data, error } = await consulta.order("fecha", { ascending: false }).limit(50);
   if (seq !== busqSeq) return;
   if (error) toast(errorMsg(error));
   busqResultados = error ? [] : data;
@@ -933,8 +945,8 @@ function pageListado() {
   <section class="comp-full">
   <div class="trip-h">3 · Comprobantes</div>
   <div class="field busq" style="margin-bottom:12px;">
-    <label>Buscar por N° de comprobante, proveedor o importe</label>
-    <input type="search" id="fBusq" inputmode="search" autocomplete="off" placeholder="Ej: 031700020301 · Del Sud · 120.500,00" value="${esc(busqueda)}">
+    <label>Buscar por N° de comprobante, proveedor, importe o nota de crédito</label>
+    <input type="search" id="fBusq" inputmode="search" autocomplete="off" placeholder="Ej: 031700020301 · Del Sud · 120.500,00 · nota de crédito" value="${esc(busqueda)}">
   </div>
   <div id="busqRes">${busqHtml()}</div>
   <div id="histNormal" ${busqueda.trim() ? "hidden" : ""}>
