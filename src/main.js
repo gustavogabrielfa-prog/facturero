@@ -57,6 +57,7 @@ let chartData = null;   // columnas del gráfico, para el tooltip
 const esAdmin = () => state.perfil?.rol === "admin";
 const esGerente = () => state.perfil?.rol === "gerente";
 const veListado = () => esAdmin() || esGerente();   // gerente: solo su sucursal (lo aplica RLS)
+const puedeCorregir = () => esAdmin() || esGerente();   // corregir / eliminar (gerente: solo su sucursal, lo aplica RLS)
 const sucursalNombre = (id) => state.sucursales.find((s) => s.id === id)?.nombre || "Sin sucursal";
 const proveedorNombre = (id) => state.proveedores.find((p) => p.id === id)?.nombre || "Proveedor sin datos";
 const tributoNombre = (id) => state.tributos.find((t) => t.id === id)?.nombre || "Tributo eliminado";
@@ -454,13 +455,13 @@ function pageSubir() {
   `;
 }
 
-/** Lista simple de comprobantes (total, IVA, IIBB) para revisar de un vistazo; admin con Corregir / Eliminar. */
+/** Lista simple de comprobantes (total, IVA, IIBB) para revisar de un vistazo; admin y gerente con Corregir / Eliminar. */
 function tablaComprobantes(list, { conHora = false, delAttr = "data-del", iconos = false } = {}) {
   const hora = (ts) => new Date(ts).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   const iva = (c) => IMPUESTOS.reduce((a, [k]) => a + (Number(c[k]) || 0), 0);
   const $ = (c, v) => fmtMoney(signo(c) * (Number(v) || 0));
   return `<div class="hoy-wrap"><table class="data-table hoy-table">
-    <thead><tr><th>Comprobante</th><th>Total</th><th>IVA</th><th>IIBB</th>${esAdmin() ? "<th></th>" : ""}</tr></thead>
+    <thead><tr><th>Comprobante</th><th>Total</th><th>IVA</th><th>IIBB</th>${puedeCorregir() ? "<th></th>" : ""}</tr></thead>
     <tbody>${list.map((c) => {
       const trib = sumTributos(c);
       const nc = c.tipo === "NOTA_CREDITO";
@@ -472,7 +473,7 @@ function tablaComprobantes(list, { conHora = false, delAttr = "data-del", iconos
       <td class="tot">${$(c, c.monto)}</td>
       <td>${$(c, iva(c))}</td>
       <td>${$(c, c.iibb)}</td>
-      ${esAdmin() ? `<td><div class="hoy-acc">${iconos
+      ${puedeCorregir() ? `<td><div class="hoy-acc">${iconos
         ? `<button class="btn secondary small ico" data-edit="${c.id}" title="Corregir" aria-label="Corregir">✎</button><button class="btn secondary small ico" ${delAttr}="${c.id}" title="Eliminar" aria-label="Eliminar">🗑</button>`
         : `<button class="btn secondary small" data-edit="${c.id}">Corregir</button><button class="btn secondary small" ${delAttr}="${c.id}">Eliminar</button>`}</div></td>` : ""}
     </tr>`;
@@ -567,7 +568,7 @@ function seccionDuplicados() {
     : `<div class="empty-state panel mb26">No hay comprobantes duplicados.</div>`}`;
 }
 
-/** Abre el formulario con los datos de un comprobante para corregirlo (solo admin). */
+/** Abre el formulario con los datos de un comprobante para corregirlo (admin o gerente). */
 function corregirComprobante(id) {
   const c = comprobantes.find((x) => x.id === id) || hoy.find((x) => x.id === id) || busqResultados?.find((x) => x.id === id)
     || dupGrupos?.flat().find((x) => x.id === id)

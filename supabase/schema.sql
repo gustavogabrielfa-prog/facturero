@@ -176,7 +176,7 @@ create policy proveedores_admin_delete on public.proveedores
 
 -- comprobantes:
 --   carga  -> INSERT en su propia sucursal; solo ve lo que cargó hoy (no ve listado ni totales)
---   gerente-> ve e inserta solo en su sucursal
+--   gerente-> ve, inserta, corrige y elimina solo en su sucursal
 --   admin  -> todo
 drop policy if exists comprobantes_admin_select on public.comprobantes;
 create policy comprobantes_admin_select on public.comprobantes
@@ -213,6 +213,17 @@ create policy comprobantes_admin_update on public.comprobantes
 drop policy if exists comprobantes_admin_delete on public.comprobantes;
 create policy comprobantes_admin_delete on public.comprobantes
   for delete to authenticated using ((select public.es_admin()));
+
+drop policy if exists comprobantes_gerente_update on public.comprobantes;
+create policy comprobantes_gerente_update on public.comprobantes
+  for update to authenticated
+  using ((select public.es_gerente()) and sucursal_id = (select public.mi_sucursal()))
+  with check ((select public.es_gerente()) and sucursal_id = (select public.mi_sucursal()));
+
+drop policy if exists comprobantes_gerente_delete on public.comprobantes;
+create policy comprobantes_gerente_delete on public.comprobantes
+  for delete to authenticated
+  using ((select public.es_gerente()) and sucursal_id = (select public.mi_sucursal()));
 
 -- ---------------------------------------------------------------------
 -- Otros tributos y tasas (lista editable por el admin; montos en comprobantes.tributos)
