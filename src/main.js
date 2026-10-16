@@ -59,6 +59,8 @@ const esGerente = () => state.perfil?.rol === "gerente";
 const veListado = () => esAdmin() || esGerente();   // gerente: solo su sucursal (lo aplica RLS)
 const puedeCorregir = () => esAdmin() || esGerente();   // corregir / eliminar (gerente: solo su sucursal, lo aplica RLS)
 const sucursalNombre = (id) => state.sucursales.find((s) => s.id === id)?.nombre || "Sin sucursal";
+/** Etiqueta de sucursal con un color fijo por sucursal (según su orden), para distinguirlas de un vistazo. */
+const sucursalTag = (id) => `<span class="suc-tag suc-c${Math.max(0, state.sucursales.findIndex((s) => s.id === id)) % 6}">${esc(sucursalNombre(id))}</span>`;
 const proveedorNombre = (id) => state.proveedores.find((p) => p.id === id)?.nombre || "Proveedor sin datos";
 const tributoNombre = (id) => state.tributos.find((t) => t.id === id)?.nombre || "Tributo eliminado";
 const tributosActivos = () => state.tributos.filter((t) => t.activo);
@@ -466,8 +468,8 @@ function tablaComprobantes(list, { conHora = false, delAttr = "data-del", iconos
       const nc = c.tipo === "NOTA_CREDITO";
       const extra = [nc && c.factura_ref ? "Afecta a N° " + esc(c.factura_ref) : "", trib > 0 ? "Otros tributos " + $(c, trib) : "", c.notas ? esc(c.notas) : ""].filter(Boolean).join(" · ");
       return `<tr${nc ? ` class="nc-row"` : ""}>
-      <td><span class="${c.grupo === "FACTURADO" ? "fact" : "nofact"}" title="${c.grupo === "FACTURADO" ? "Facturado" : "No facturado"}">●</span> ${esc(proveedorNombre(c.proveedor_id))}${nc ? ` <span class="nc-tag">Nota de crédito</span>` : ""}
-        <small>${conHora ? hora(c.created_at) + " hs · " : ""}N° ${esc(c.numero)} · ${fmtDate(c.fecha)}${esAdmin() ? " · " + esc(sucursalNombre(c.sucursal_id)) : ""}${c.cargado_por ? ` · <span class="quien" title="Cargado por">${esc(c.cargado_por)}</span>` : ""}</small>
+      <td><span class="${c.grupo === "FACTURADO" ? "fact" : "nofact"}" title="${c.grupo === "FACTURADO" ? "Facturado" : "No facturado"}">●</span> <span class="prov-nom">${esc(proveedorNombre(c.proveedor_id))}</span>${esAdmin() ? " " + sucursalTag(c.sucursal_id) : ""}${nc ? ` <span class="nc-tag">Nota de crédito</span>` : ""}
+        <small>${conHora ? hora(c.created_at) + " hs · " : ""}N° ${esc(c.numero)} · ${fmtDate(c.fecha)}${c.cargado_por ? ` · <span class="quien" title="Cargado por">${esc(c.cargado_por)}</span>` : ""}</small>
         ${extra ? `<small>${extra}</small>` : ""}</td>
       <td class="tot">${$(c, c.monto)}</td>
       <td>${$(c, iva(c))}</td>
