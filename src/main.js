@@ -53,6 +53,7 @@ let arcaFilas = null, arcaArchivo = "", arcaRes = null, arcaComps = [], arcaCarg
 let provNuevoPendiente = null;   // { nombre, cuit } para precargar "+ Nuevo" al cargar desde ARCA
 let chartGran = null;   // null = automático según el rango de fechas
 let chartData = null;   // columnas del gráfico, para el tooltip
+let chartVer = "tipo";  // "tipo" = Facturado / No facturado; "sucursal" = aporte de cada sucursal (admin, todas)
 
 const esAdmin = () => state.perfil?.rol === "admin";
 const esGerente = () => state.perfil?.rol === "gerente";
@@ -60,7 +61,8 @@ const veListado = () => esAdmin() || esGerente();   // gerente: solo su sucursal
 const puedeCorregir = () => esAdmin() || esGerente();   // corregir / eliminar (gerente: solo su sucursal, lo aplica RLS)
 const sucursalNombre = (id) => state.sucursales.find((s) => s.id === id)?.nombre || "Sin sucursal";
 /** Etiqueta de sucursal con un color fijo por sucursal (según su orden), para distinguirlas de un vistazo. */
-const sucursalTag = (id) => `<span class="suc-tag suc-c${Math.max(0, state.sucursales.findIndex((s) => s.id === id)) % 6}">${esc(sucursalNombre(id))}</span>`;
+const sucColor = (id) => `suc-c${Math.max(0, state.sucursales.findIndex((s) => s.id === id)) % 6}`;
+const sucursalTag = (id) => `<span class="suc-tag ${sucColor(id)}">${esc(sucursalNombre(id))}</span>`;
 const proveedorNombre = (id) => state.proveedores.find((p) => p.id === id)?.nombre || "Proveedor sin datos";
 const tributoNombre = (id) => state.tributos.find((t) => t.id === id)?.nombre || "Tributo eliminado";
 const tributosActivos = () => state.tributos.filter((t) => t.activo);
@@ -691,22 +693,34 @@ function chartCompras(list) {
   const byKey = Object.fromEntries(groupBy(list, (c) => periodKey(c.fecha, gran)).map((r) => [r.key, r]));
   // las notas de crédito restan; un período con más crédito que compras queda en 0 en el gráfico
   const cols = keys.map((k) => ({ key: k, fact: Math.max(0, byKey[k]?.fact || 0), noFact: Math.max(0, byKey[k]?.noFact || 0) }));
+  // Por sucursal: solo el admin mirando todas, y si hay más de una sucursal en el período
+  const sucIds = state.sucursales.map((s) => s.id).filter((id) => list.some((c) => c.sucursal_id === id));
+  const verSuc = esAdmin() && sucursalFilter === "todas" && sucIds.length > 1;
+  const porSuc = verSuc && chartVer === "sucursal";
+  if (porSuc) {
+    const porPeriodo = sucIds.map((id) => Object.fromEntries(groupBy(list.filter((c) => c.sucursal_id === id), (c) => periodKey(c.fecha, gran)).map((r) => [r.key, Math.max(0, r.fact + r.noFact)])));
+    for (const c of cols) c.sucs = sucIds.map((id, j) => ({ id, v: porPeriodo[j][c.key] || 0 }));
+  }
+  for (const c of cols) c.tot = c.sucs ? c.sucs.reduce((a, s) => a + s.v, 0) : c.fact + c.noFact;
   chartData = { cols, gran };
 
-  const max = Math.max(0, ...cols.map((c) => c.fact + c.noFact));
+  const max = Math.max(0, ...cols.map((c) => c.tot));
   const step = max > 0 ? niceStep(max) : 1;
   const top = max > 0 ? Math.ceil(max / step) * step : 4;
   const ticks = []; for (let v = 0; v <= top + step / 2; v += step) ticks.push(v);
   const pct = (v) => (v / top) * 100;
   const multiYear = desde.slice(0, 4) !== hasta.slice(0, 4);
   const every = Math.max(1, Math.ceil(cols.length / 7));
-  const pico = cols.reduce((a, c, i) => (c.fact + c.noFact > cols[a].fact + cols[a].noFact ? i : a), 0);
+  const pico = cols.reduce((a, c, i) => (c.tot > cols[a].tot ? i : a), 0);
   const granBtns = [["dia", "Día"], ["semana", "Semana"], ["mes", "Mes"], ["año", "Año"]];
 
   return `
   <div class="panel chart-panel mb26" id="chartPanel">
     <div class="chart-head">
-      <div class="chart-legend"><span><i class="sw fact"></i>Facturado</span><span><i class="sw nofact"></i>No facturado</span></div>
+      <div class="chart-legend">${porSuc
+        ? sucIds.map((id) => `<span><i class="sw ${sucColor(id)}"></i>${esc(sucursalNombre(id))}</span>`).join("")
+        : `<span><i class="sw fact"></i>Facturado</span><span><i class="sw nofact"></i>No facturado</span>`}</div>
+      ${verSuc ? `<div class="filters chart-gran"><button data-cver="tipo" class="${porSuc ? "" : "active"}">Por tipo</button><button data-cver="sucursal" class="${porSuc ? "active" : ""}">Por sucursal</button></div>` : ""}
       <div class="filters chart-gran">${granBtns.map(([g, l]) => `<button data-cgran="${g}" class="${gran === g ? "active" : ""}">${l}</button>`).join("")}</div>
     </div>
     <div class="chart">
@@ -716,11 +730,13 @@ function chartCompras(list) {
           <div class="chart-cols">
             ${ticks.map((v) => `<div class="chart-grid" style="bottom:${pct(v)}%"></div>`).join("")}
             ${cols.map((c, i) => {
-              const tot = c.fact + c.noFact;
+              const tot = c.tot;
               return `<div class="chart-col" data-ci="${i}" tabindex="0" aria-label="${esc(periodLabel(c.key, gran))}: ${fmtMoney(tot)}">
                 <div class="chart-bar" style="height:${pct(tot)}%">
-                  ${c.noFact > 0 ? `<div class="seg nofact" style="flex:${c.noFact}"></div>` : ""}
-                  ${c.fact > 0 ? `<div class="seg fact" style="flex:${c.fact}"></div>` : ""}
+                  ${c.sucs
+                    ? c.sucs.filter((s) => s.v > 0).reverse().map((s) => `<div class="seg ${sucColor(s.id)}" style="flex:${s.v}"></div>`).join("")
+                    : `${c.noFact > 0 ? `<div class="seg nofact" style="flex:${c.noFact}"></div>` : ""}
+                  ${c.fact > 0 ? `<div class="seg fact" style="flex:${c.fact}"></div>` : ""}`}
                 </div>
                 ${i === pico && tot > 0 && cols.length <= 31 ? `<div class="chart-peak" style="bottom:${pct(tot)}%">${fmtCompact(tot)}</div>` : ""}
                 ${i % every === 0 ? `<div class="chart-x">${periodShort(c.key, gran, multiYear)}</div>` : ""}
@@ -739,7 +755,7 @@ function chartCompras(list) {
 }
 
 /** Aporte de cada proveedor / sucursal al total (barras horizontales); los más chicos van a "Otros". */
-function chartAporte(list, { titulo, campo, nombre, attr }) {
+function chartAporte(list, { titulo, campo, nombre, attr, colorSuc = false }) {
   const TOP = 6;
   const rows = groupBy(list, (c) => c[campo]).map((g) => ({ ...g, fact: Math.max(0, g.fact), noFact: Math.max(0, g.noFact) })).map((g) => ({ ...g, tot: g.fact + g.noFact })).sort((a, b) => b.tot - a.tot);
   const total = rows.reduce((a, g) => a + g.tot, 0);
@@ -755,13 +771,17 @@ function chartAporte(list, { titulo, campo, nombre, attr }) {
   return `<div class="panel chart-panel mb26">
     <div class="chart-head">
       <div class="prov-title">${titulo}</div>
-      <div class="chart-legend"><span><i class="sw fact"></i>Facturado</span><span><i class="sw nofact"></i>No facturado</span></div>
+      <div class="chart-legend">${colorSuc
+        ? `<span><i class="sw muestra"></i>Facturado</span><span><i class="sw muestra rayado"></i>No facturado</span>`
+        : `<span><i class="sw fact"></i>Facturado</span><span><i class="sw nofact"></i>No facturado</span>`}</div>
     </div>
     ${shown.map((g) => {
       const n = g.key ? nombre(g.key) : g.nombre;
+      // por sucursal: color de la sucursal, lleno = facturado y rayado = no facturado
+      const [cf, cn] = colorSuc && g.key ? [sucColor(g.key), sucColor(g.key) + " rayado"] : ["fact", "nofact"];
       return `<${g.key ? `button type="button" ${attr}="${g.key}" title="Ver solo ${esc(n)}"` : "div"} class="prov-row">
-        <span class="prov-name">${esc(n)}</span>
-        <span class="prov-bar"><i class="seg fact" style="width:${pct(g.fact)}%"></i><i class="seg nofact" style="width:${pct(g.noFact)}%"></i></span>
+        <span class="prov-name">${colorSuc && g.key ? `<i class="sw ${sucColor(g.key)}"></i>` : ""}${esc(n)}</span>
+        <span class="prov-bar"><i class="seg ${cf}" style="width:${pct(g.fact)}%"></i><i class="seg ${cn}" style="width:${pct(g.noFact)}%"></i></span>
         <span class="prov-amt"><b>${fmtMoney(g.tot)}</b> · ${Math.round((g.tot / total) * 100)}%</span>
       </${g.key ? "button" : "div"}>`;
     }).join("")}
@@ -870,7 +890,7 @@ function pageListado() {
   </div>
   ${chartCompras(hist)}` : ""}
   ${esAdmin() && sucursalFilter === "todas" && provFilter === "todos" && new Set(hist.map((c) => c.sucursal_id)).size > 1
-    ? chartAporte(hist, { titulo: "Aporte por sucursal", campo: "sucursal_id", nombre: sucursalNombre, attr: "data-sfil" }) : ""}
+    ? chartAporte(hist, { titulo: "Aporte por sucursal", campo: "sucursal_id", nombre: sucursalNombre, attr: "data-sfil", colorSuc: true }) : ""}
   ${provFilter === "todos" ? chartAporte(hist, { titulo: "Aporte por proveedor", campo: "proveedor_id", nombre: proveedorNombre, attr: "data-pfil" }) : ""}` : `<div class="empty-state panel">No hay comprobantes para este filtro.</div>`}`}
   </section>
   </div>
@@ -1179,9 +1199,11 @@ function wireChartTip() {
   const show = (col) => {
     const c = chartData.cols[col.dataset.ci];
     tip.innerHTML = `<div class="tip-title">${esc(periodLabel(c.key, chartData.gran))}</div>
-      <div><i class="sw fact"></i>Facturado <b>${fmtMoney(c.fact)}</b></div>
-      <div><i class="sw nofact"></i>No facturado <b>${fmtMoney(c.noFact)}</b></div>
-      <div class="tip-tot">Total <b>${fmtMoney(c.fact + c.noFact)}</b></div>`;
+      ${c.sucs
+        ? c.sucs.map((s) => `<div><i class="sw ${sucColor(s.id)}"></i>${esc(sucursalNombre(s.id))} <b>${fmtMoney(s.v)}</b></div>`).join("")
+        : `<div><i class="sw fact"></i>Facturado <b>${fmtMoney(c.fact)}</b></div>
+      <div><i class="sw nofact"></i>No facturado <b>${fmtMoney(c.noFact)}</b></div>`}
+      <div class="tip-tot">Total <b>${fmtMoney(c.tot)}</b></div>`;
     tip.hidden = false;
     panel.querySelectorAll(".chart-col.hover").forEach((el) => el.classList.remove("hover"));
     col.classList.add("hover");
@@ -1273,6 +1295,7 @@ function wirePage() {
     document.querySelectorAll("[data-sfil]").forEach((b) => b.addEventListener("click", () => { sucursalFilter = b.dataset.sfil; render(); }));
     document.querySelectorAll("[data-pfil]").forEach((b) => b.addEventListener("click", () => { provFilter = b.dataset.pfil; render(); }));
     document.querySelectorAll("[data-cgran]").forEach((b) => b.addEventListener("click", () => { chartGran = b.dataset.cgran; render(); }));
+    document.querySelectorAll("[data-cver]").forEach((b) => b.addEventListener("click", () => { chartVer = b.dataset.cver; render(); }));
     wireChartTip();
     document.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async () => {
       if (await eliminarComprobante(b.dataset.del)) render();
