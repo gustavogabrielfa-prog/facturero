@@ -26,115 +26,169 @@ const ordenFecha = (a, b) => a.fecha.localeCompare(b.fecha) || String(a.numero).
  */
 export function generarReportePDF({ list, desde, hasta, alcance, proveedorNombre, sucursalNombre, tributoNombre = (id) => id }) {
   const doc = new jsPDF({ orientation: "landscape" });
-  const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 12;
+  const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 14, AN = W - 2 * M;
   const t = computeTotals(list);
   const facturas = list.filter((c) => signo(c) > 0).sort(ordenFecha);
   const notas = list.filter((c) => signo(c) < 0).sort(ordenFecha);
   const impCols = columnasImpuestos(list, tributoNombre);
   const variasSuc = new Set(list.map((c) => c.sucursal_id)).size > 1;
   const bySuc = groupBy(list, (c) => sucursalNombre(c.sucursal_id)).sort((a, b) => (b.fact + b.noFact) - (a.fact + a.noFact));
-
-  let y = 16;
-  const salto = (alto) => { if (y + alto > H - 12) { doc.addPage(); y = 16; return true; } return false; };
-  const line = (text, step = 5) => { salto(step); doc.text(text, M, y); y += step; };
-  const titulo = (text) => { salto(14); doc.setFontSize(12); doc.setFont(undefined, "bold"); line(text, 6); doc.setFont(undefined, "normal"); doc.setFontSize(10); };
-  /** Pares etiqueta / importe alineados en dos columnas. */
-  const pares = (filas) => {
-    for (const [label, v, negrita] of filas) {
-      salto(5);
-      if (negrita) doc.setFont(undefined, "bold");
-      doc.text(label, M, y); doc.text(fmtMoney(v), M + 120, y, { align: "right" });
-      if (negrita) doc.setFont(undefined, "normal");
-      y += 5;
-    }
-    y += 4;
-  };
-
-  doc.setFontSize(16); doc.setFont(undefined, "bold"); line("Facturero — Reporte de compras", 8); doc.setFont(undefined, "normal");
-  doc.setFontSize(10); doc.setTextColor(90);
-  line(`Período: ${fmtDate(desde)} a ${fmtDate(hasta)}   ·   Alcance: ${alcance}   ·   Generado: ${new Date().toLocaleString("es-AR")}`, 9);
-  doc.setTextColor(20);
-
   const totFact = facturas.reduce((a, c) => a + (Number(c.monto) || 0), 0);
   const totNC = notas.reduce((a, c) => a + (Number(c.monto) || 0), 0);
-  titulo("Resumen");
-  pares([
-    [`Facturas (${facturas.length})`, totFact],
-    [`Notas de crédito (${notas.length}) — se restan`, -totNC],
-    ["Total neto", t.total, true],
-    ["   Facturado (blanco)", t.fact],
-    ["   No facturado (negro)", t.noFact],
-  ]);
+  const periodo = desde === hasta ? fmtDate(desde) : `${fmtDate(desde)} al ${fmtDate(hasta)}`;
+  const generado = new Date().toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" });
 
-  titulo("Impuestos (neto de notas de crédito)");
-  pares([
+  // Paleta (la misma de la app)
+  const C = {
+    marca: [23, 96, 92], marcaSuave: [233, 242, 241], tinta: [18, 33, 28], gris: [93, 107, 100], linea: [216, 221, 215],
+    suave: [244, 246, 243], fact: [29, 113, 70], nofact: [154, 90, 23], nc: [156, 51, 34], ncSuave: [248, 230, 226], blanco: [255, 255, 255],
+  };
+  const color = (c) => doc.setTextColor(...c);
+  const relleno = (c) => doc.setFillColor(...c);
+  const trazo = (c) => doc.setDrawColor(...c);
+  const fuente = (tam, estilo = "normal") => { doc.setFontSize(tam); doc.setFont("helvetica", estilo); };
+
+  let y = 0;
+  const cabeceraChica = () => {
+    fuente(9, "bold"); color(C.marca); doc.text("Facturero", M, 12);
+    fuente(9); color(C.gris); doc.text(`Reporte de compras · ${periodo} · ${alcance}`, M + 19, 12);
+    trazo(C.marca); doc.setLineWidth(0.5); doc.line(M, 15, W - M, 15); doc.setLineWidth(0.2);
+    y = 23;
+  };
+  const salto = (alto) => { if (y + alto > H - 16) { doc.addPage(); cabeceraChica(); return true; } return false; };
+
+  // ----- Encabezado principal -----
+  relleno(C.marca); doc.rect(0, 0, W, 30, "F");
+  fuente(20, "bold"); color(C.blanco); doc.text("Facturero", M, 14);
+  fuente(11); doc.text("Reporte de compras", M, 21);
+  fuente(14, "bold"); doc.text(periodo, W - M, 14, { align: "right" });
+  fuente(10); doc.text(alcance, W - M, 21, { align: "right" });
+  y = 40;
+
+  // ----- Tarjetas de resumen -----
+  const tarjetas = [
+    ["TOTAL NETO", t.total, C.marca, `${facturas.length + notas.length} comprobantes`],
+    ["FACTURADO (BLANCO)", t.fact, C.fact, ""],
+    ["NO FACTURADO (NEGRO)", t.noFact, C.nofact, ""],
+    ["NOTAS DE CRÉDITO", -totNC, C.nc, `${notas.length} ${notas.length === 1 ? "nota" : "notas"} · se restan`],
+  ];
+  const gap = 5, tw = (AN - gap * 3) / 4, th = 24;
+  tarjetas.forEach(([label, v, col, sub], i) => {
+    const x = M + i * (tw + gap);
+    relleno(i === 0 ? C.marcaSuave : C.blanco); trazo(C.linea); doc.roundedRect(x, y, tw, th, 2, 2, "FD");
+    relleno(col); doc.rect(x, y + 3, 1.6, th - 6, "F");
+    fuente(7.5, "bold"); color(C.gris); doc.text(label, x + 6, y + 7);
+    fuente(15, "bold"); color(i === 0 ? C.marca : C.tinta); doc.text(fmtMoney(v), x + 6, y + 15.5);
+    if (sub) { fuente(7.5); color(C.gris); doc.text(sub, x + 6, y + 20.5); }
+  });
+  y += th + 9;
+
+  // ----- Cajas: impuestos y composición -----
+  /** Caja con título y filas [etiqueta, importe, esTotal, color]; los totales van en negrita con una línea arriba ("sep" = solo la línea). */
+  const caja = (x, w, titulo, filas) => {
+    const alto = 11 + filas.length * 6.2 + 3;
+    trazo(C.linea); relleno(C.blanco); doc.roundedRect(x, y, w, alto, 2, 2, "FD");
+    fuente(10, "bold"); color(C.marca); doc.text(titulo, x + 5, y + 7);
+    let yy = y + 14;
+    for (const [label, v, total, col] of filas) {
+      if (total) { trazo(C.linea); doc.line(x + 5, yy - 4.3, x + w - 5, yy - 4.3); }
+      fuente(9, total === true ? "bold" : "normal"); color(col || C.tinta);
+      doc.text(label, x + 5, yy);
+      doc.text(fmtMoney(v), x + w - 5, yy, { align: "right" });
+      yy += 6.2;
+    }
+    return alto;
+  };
+  const filasImp = [
     ...IMPUESTOS.map(([k, label]) => [label, t[k]]).filter(([, v]) => v),
     ["Total IVA", t.ivaTotal, true],
     ["Ingresos Brutos (Misiones)", t.iibb],
     ...Object.entries(t.tributos).filter(([, v]) => v).map(([id, v]) => [tributoNombre(id), v]),
-    ["Total impuestos", t.impuestosTotal, true],
-  ]);
-
-  if (bySuc.length > 1) {
-    titulo("Por sucursal");
-    for (const s of bySuc) line(`${s.key}:  blanco ${fmtMoney(s.fact)}  ·  negro ${fmtMoney(s.noFact)}  ·  total ${fmtMoney(s.fact + s.noFact)}`);
-    y += 4;
-  }
+    ["Total impuestos", t.impuestosTotal, true, C.marca],
+  ];
+  const filasComp = [
+    [`Facturas (${facturas.length})`, totFact],
+    [`Notas de crédito (${notas.length})`, -totNC, false, notas.length ? C.nc : null],
+    ["Total neto", t.total, true, C.marca],
+    ...(bySuc.length > 1 ? bySuc.map((s, i) => [s.key, s.fact + s.noFact, i === 0 ? "sep" : false]) : []),
+  ];
+  const cw = (AN - gap) / 2;
+  const altoCajas = Math.max(
+    caja(M, cw, "Impuestos (neto de notas de crédito)", filasImp),
+    caja(M + cw + gap, cw, bySuc.length > 1 ? "Composición y aporte por sucursal" : "Composición", filasComp),
+  );
+  y += altoCajas + 10;
 
   // ----- Tablas de detalle -----
   const cols = [
-    { label: "Fecha", w: 20, get: (c) => fmtDate(c.fecha) },
-    { label: "Tipo", w: 16, get: (c) => (c.grupo === "FACTURADO" ? "Fact." : "No fact.") },
-    { label: "N°", w: 30, get: (c) => String(c.numero) },
+    { label: "Fecha", w: 21, get: (c) => fmtDate(c.fecha) },
+    { label: "Tipo", w: 17, get: (c) => (c.grupo === "FACTURADO" ? "Fact." : "No fact."), col: (c) => (c.grupo === "FACTURADO" ? C.fact : C.nofact) },
+    { label: "N° comprobante", w: 31, get: (c) => String(c.numero) },
     { label: "Proveedor", w: 0, get: (c) => proveedorNombre(c.proveedor_id) },
     ...(variasSuc ? [{ label: "Sucursal", w: 32, get: (c) => sucursalNombre(c.sucursal_id) }] : []),
     ...impCols.map((col) => ({ label: col.label, w: 24, num: true, get: col.get })),
-    { label: "Total", w: 28, num: true, get: (c) => Number(c.monto) || 0 },
+    { label: "Total", w: 29, num: true, fuerte: true, get: (c) => Number(c.monto) || 0 },
   ];
   const fijo = cols.reduce((a, c) => a + c.w, 0);
-  cols.find((c) => c.label === "Proveedor").w = Math.max(30, W - 2 * M - fijo);
-  let x = M; for (const c of cols) { c.x = x; x += c.w; }
+  cols.find((c) => c.label === "Proveedor").w = Math.max(30, AN - fijo);
+  let cx = M; for (const c of cols) { c.x = cx; cx += c.w; }
   const celda = (col, texto) => {
     let s = String(texto);
-    while (s.length > 1 && doc.getTextWidth(s) > col.w - 2) s = s.slice(0, -1);
+    while (s.length > 1 && doc.getTextWidth(s) > col.w - 3) s = s.slice(0, -1);
     if (s !== String(texto)) s = s.slice(0, -1) + "…";
-    if (col.num) doc.text(s, col.x + col.w - 1, y, { align: "right" });
-    else doc.text(s, col.x + 1, y);
+    if (col.num) doc.text(s, col.x + col.w - 1.5, y, { align: "right" });
+    else doc.text(s, col.x + 1.5, y);
   };
-  const encabezado = () => {
-    doc.setFontSize(8); doc.setFont(undefined, "bold");
-    doc.setFillColor(232, 236, 231); doc.rect(M, y - 4, W - 2 * M, 6, "F");
-    for (const col of cols) celda(col, col.label);
-    doc.setFont(undefined, "normal"); y += 6;
-  };
-  const tabla = (nombre, filas, pie) => {
-    titulo(nombre);
-    if (!filas.length) { line("Sin comprobantes.", 8); return; }
+  const FILA = 6.2;
+  const tabla = (titulo, filas, pie, acento, fondoPie) => {
+    salto(30);
+    fuente(12, "bold"); color(acento); doc.text(titulo, M, y);
+    y += 4;
+    const encabezado = () => {
+      relleno(acento); doc.rect(M, y, AN, 7.5, "F");
+      fuente(8, "bold"); color(C.blanco);
+      y += 5; for (const col of cols) celda(col, col.label); y += 2.5;
+    };
     encabezado();
-    for (const c of filas) {
-      if (salto(5)) encabezado();
-      for (const col of cols) celda(col, col.num ? fmtMoney(col.get(c)) : col.get(c));
-      doc.setDrawColor(215); doc.line(M, y + 1.4, W - M, y + 1.4);
-      y += 5;
-    }
-    salto(7);
-    doc.setFont(undefined, "bold"); doc.setFillColor(244, 246, 243); doc.rect(M, y - 4, W - 2 * M, 6, "F");
-    doc.text(pie, M + 1, y);
+    filas.forEach((c, i) => {
+      if (salto(FILA + 2)) encabezado();
+      if (i % 2) { relleno(C.suave); doc.rect(M, y, AN, FILA, "F"); }
+      y += 4.3;
+      for (const col of cols) {
+        fuente(8.3, col.fuerte ? "bold" : "normal"); color(col.col ? col.col(c) : C.tinta);
+        celda(col, col.num ? fmtMoney(col.get(c)) : col.get(c));
+      }
+      y += FILA - 4.3;
+    });
+    salto(FILA + 4);
+    relleno(fondoPie); doc.rect(M, y, AN, FILA + 1, "F");
+    trazo(acento); doc.setLineWidth(0.5); doc.line(M, y, W - M, y); doc.setLineWidth(0.2);
+    y += 4.8; fuente(8.5, "bold"); color(acento);
+    doc.text(pie, M + 1.5, y);
+    color(C.tinta);
     for (const col of cols.filter((c) => c.num)) celda(col, fmtMoney(filas.reduce((a, c) => a + col.get(c), 0)));
-    doc.setFont(undefined, "normal"); doc.setFontSize(10); y += 10;
+    y += 12;
   };
-  tabla(`Facturas (${facturas.length})`, facturas, "Subtotal facturas");
-  tabla(`Notas de crédito (${notas.length}) — se restan del total`, notas, "Subtotal notas de crédito");
+  if (facturas.length) tabla(`Facturas (${facturas.length})`, facturas, "Subtotal facturas", C.marca, C.marcaSuave);
+  else { fuente(10); color(C.gris); doc.text("Sin facturas en este período.", M, y); y += 10; }
+  if (notas.length) tabla(`Notas de crédito (${notas.length}) — se restan del total`, notas, "Subtotal notas de crédito", C.nc, C.ncSuave);
 
-  salto(16);
-  doc.setFontSize(12); doc.setFont(undefined, "bold");
-  doc.text("TOTAL NETO (facturas menos notas de crédito)", M, y);
-  doc.text(fmtMoney(t.total), W - M - 1, y, { align: "right" });
-  y += 6; doc.setFontSize(10); doc.setFont(undefined, "normal");
-  doc.text(`Impuestos netos: ${fmtMoney(t.impuestosTotal)}  (IVA ${fmtMoney(t.ivaTotal)} · IIBB ${fmtMoney(t.iibb)}${t.tributosTotal ? ` · Otros ${fmtMoney(t.tributosTotal)}` : ""})`, M, y);
+  // ----- Total final -----
+  salto(26);
+  relleno(C.marca); doc.roundedRect(M, y, AN, 18, 2, 2, "F");
+  fuente(9, "bold"); color([200, 228, 225]); doc.text(notas.length ? "TOTAL NETO · facturas menos notas de crédito" : "TOTAL DEL PERÍODO", M + 6, y + 7);
+  fuente(8.5); doc.text(`Impuestos ${fmtMoney(t.impuestosTotal)}  ·  IVA ${fmtMoney(t.ivaTotal)}  ·  IIBB ${fmtMoney(t.iibb)}${t.tributosTotal ? `  ·  Otros ${fmtMoney(t.tributosTotal)}` : ""}`, M + 6, y + 13);
+  fuente(18, "bold"); color(C.blanco); doc.text(fmtMoney(t.total), W - M - 6, y + 12, { align: "right" });
 
+  // ----- Pie de página -----
   const paginas = doc.getNumberOfPages();
-  for (let i = 1; i <= paginas; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(120); doc.text(`Página ${i} de ${paginas}`, W - M, H - 6, { align: "right" }); }
+  for (let i = 1; i <= paginas; i++) {
+    doc.setPage(i);
+    trazo(C.linea); doc.line(M, H - 10, W - M, H - 10);
+    fuente(7.5); color(C.gris);
+    doc.text(`Facturero · Generado el ${generado}`, M, H - 6);
+    doc.text(`Página ${i} de ${paginas}`, W - M, H - 6, { align: "right" });
+  }
   doc.save(`facturero_reporte_${desde}_a_${hasta}.pdf`);
 }
 
