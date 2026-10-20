@@ -303,3 +303,335 @@ export function generarInformeArca({ res, archivo, proveedorNombre, sucursalNomb
 
   doc.save(`facturero_control_arca_${res.desde}_a_${res.hasta}.pdf`);
 }
+
+/* ---------- Informe de ventas (libro de IVA ventas: blanco / negro por punto de venta) ---------- */
+const pctTxt = (n) => `${(Number(n) || 0).toLocaleString("es-AR", { maximumFractionDigits: 1 })}%`;
+/** Puntos de venta del PDF recién leído (el historial guardado ya trae los suyos en resumen.pvs). */
+const pvsDelLibro = (libro, asignacion) => Object.values((libro.filas || []).reduce((m, f) => {
+  const p = (m[f.pv] ||= { pv: f.pv, lado: asignacion[f.pv], n: 0, total: 0 }); p.n++; p.total += f.total; return m;
+}, {})).sort((a, b) => a.pv.localeCompare(b.pv));
+
+/** PDF con el mismo estilo que el reporte de compras: encabezado, tarjetas, puntos de venta, detalle por día y total. */
+export function generarInformeVentasPDF({ libro, asignacion, archivo, sucursal, resumen }) {
+  const { t, dias } = resumen;
+  const pvs = resumen.pvs || pvsDelLibro(libro, asignacion);
+  const doc = new jsPDF();
+  const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 14, AN = W - 2 * M;
+  const C = {
+    marca: [23, 96, 92], marcaSuave: [233, 242, 241], tinta: [18, 33, 28], gris: [93, 107, 100], linea: [216, 221, 215],
+    suave: [244, 246, 243], fact: [29, 113, 70], nofact: [154, 90, 23], blanco: [255, 255, 255],
+  };
+  const color = (c) => doc.setTextColor(...c), relleno = (c) => doc.setFillColor(...c), trazo = (c) => doc.setDrawColor(...c);
+  const fuente = (tam, estilo = "normal") => { doc.setFontSize(tam); doc.setFont("helvetica", estilo); };
+  const periodo = libro.desde === libro.hasta ? fmtDate(libro.desde) : `${fmtDate(libro.desde)} al ${fmtDate(libro.hasta)}`;
+  const alcance = [libro.empresa, sucursal].filter(Boolean).join(" · ");
+  let y = 0;
+  const cabeceraChica = () => {
+    fuente(9, "bold"); color(C.marca); doc.text("Facturero", M, 12);
+    fuente(9); color(C.gris); doc.text(`Ventas · ${periodo}${alcance ? " · " + alcance : ""}`, M + 19, 12);
+    trazo(C.marca); doc.setLineWidth(0.5); doc.line(M, 15, W - M, 15); doc.setLineWidth(0.2);
+    y = 23;
+  };
+  const salto = (alto) => { if (y + alto > H - 16) { doc.addPage(); cabeceraChica(); return true; } return false; };
+
+  relleno(C.marca); doc.rect(0, 0, W, 30, "F");
+  fuente(20, "bold"); color(C.blanco); doc.text("Facturero", M, 14);
+  fuente(11); doc.text("Informe de ventas · blanco y negro", M, 21);
+  fuente(13, "bold"); doc.text(periodo, W - M, 14, { align: "right" });
+  fuente(10); if (alcance) doc.text(alcance, W - M, 21, { align: "right" });
+  y = 40;
+
+  // Tarjetas
+  const tarjetas = [
+    ["VENTAS EN BLANCO", t.blanco, C.fact, `${t.nBlanco} comprob. · ${pctTxt(100 - t.pctNegro)}`],
+    ["VENTAS EN NEGRO", t.negro, C.nofact, `${t.nNegro} comprob. · ${pctTxt(t.pctNegro)}`],
+    ["TOTAL VENDIDO", t.total, C.marca, `${t.nBlanco + t.nNegro} comprobantes`],
+  ];
+  const gap = 5, tw = (AN - gap * 2) / 3, th = 24;
+  tarjetas.forEach(([label, v, col, sub], i) => {
+    const x = M + i * (tw + gap);
+    relleno(i === 2 ? C.marcaSuave : C.blanco); trazo(C.linea); doc.roundedRect(x, y, tw, th, 2, 2, "FD");
+    relleno(col); doc.rect(x, y + 3, 1.6, th - 6, "F");
+    fuente(7.5, "bold"); color(C.gris); doc.text(label, x + 6, y + 7);
+    fuente(13.5, "bold"); color(i === 2 ? C.marca : C.tinta); doc.text(fmtMoney(v), x + 6, y + 15.5);
+    fuente(7.5); color(C.gris); doc.text(sub, x + 6, y + 20.5);
+  });
+  y += th + 6;
+
+  // Barra de proporción
+  const bw = AN * (t.total ? Math.max(0, t.blanco) / t.total : 0);
+  relleno(C.fact); doc.rect(M, y, bw, 4, "F");
+  relleno(C.nofact); doc.rect(M + bw, y, AN - bw, 4, "F");
+  y += 9;
+  fuente(8.5); color(C.gris);
+  doc.text(`IVA débito (blanco): ${fmtMoney(t.ivaBlanco)}  ·  Neto gravado: ${fmtMoney(t.netoBlanco)}  ·  Exento: ${fmtMoney(t.exentoBlanco)}`, M, y);
+  if (t.ncBlanco || t.ncNegro) { y += 5; doc.text(`Notas de crédito (ya restadas): blanco ${fmtMoney(t.ncBlanco)}  ·  negro ${fmtMoney(t.ncNegro)}`, M, y); }
+  y += 10;
+
+  // Tabla genérica con encabezado de color, filas alternadas y fila de total
+  const tabla = (titulo, cols, filas, pie) => {
+    salto(30);
+    fuente(12, "bold"); color(C.marca); doc.text(titulo, M, y); y += 4;
+    let cx = M; for (const c of cols) { c.x = cx; cx += c.w; }
+    const celda = (col, s) => (col.num ? doc.text(String(s), col.x + col.w - 2, y, { align: "right" }) : doc.text(String(s), col.x + 2, y));
+    const encabezado = () => { relleno(C.marca); doc.rect(M, y, AN, 7.5, "F"); fuente(8, "bold"); color(C.blanco); y += 5; cols.forEach((c) => celda(c, c.label)); y += 2.5; };
+    encabezado();
+    filas.forEach((f, i) => {
+      if (salto(8)) encabezado();
+      if (i % 2) { relleno(C.suave); doc.rect(M, y, AN, 6.2, "F"); }
+      y += 4.3;
+      cols.forEach((c) => { fuente(8.5, c.fuerte ? "bold" : "normal"); color(c.col || C.tinta); celda(c, c.get(f)); });
+      y += 1.9;
+    });
+    salto(10);
+    relleno(C.marcaSuave); doc.rect(M, y, AN, 7.2, "F");
+    trazo(C.marca); doc.setLineWidth(0.5); doc.line(M, y, W - M, y); doc.setLineWidth(0.2);
+    y += 4.9; fuente(8.5, "bold");
+    cols.forEach((c, i) => { color(i === 0 ? C.marca : c.col || C.tinta); celda(c, pie[i] ?? ""); });
+    y += 12;
+  };
+
+  tabla("Puntos de venta", [
+    { label: "Punto de venta", w: 60, get: (p) => p.pv },
+    { label: "Tipo", w: 40, get: (p) => (p.lado === "blanco" ? "Blanco" : p.lado === "negro" ? "Negro" : "Sin asignar") },
+    { label: "Comprobantes", w: 40, num: true, get: (p) => p.n },
+    { label: "Total", w: AN - 140, num: true, fuerte: true, get: (p) => fmtMoney(p.total) },
+  ], pvs, ["Total", "", String(t.nBlanco + t.nNegro), fmtMoney(t.total)]);
+
+  const conVenta = dias.filter((d) => d.blanco || d.negro);
+  const pctDia = (d) => pctTxt(d.blanco + d.negro ? (d.negro / (d.blanco + d.negro)) * 100 : 0);
+  tabla(`Detalle por día (${conVenta.length} ${conVenta.length === 1 ? "día" : "días"} con ventas)`, [
+    { label: "Día", w: 36, get: (d) => fmtDate(d.fecha) },
+    { label: "Blanco", w: 40, num: true, col: C.fact, get: (d) => fmtMoney(d.blanco) },
+    { label: "Negro", w: 40, num: true, col: C.nofact, get: (d) => fmtMoney(d.negro) },
+    { label: "Total", w: 42, num: true, fuerte: true, get: (d) => fmtMoney(d.blanco + d.negro) },
+    { label: "% negro", w: AN - 158, num: true, get: pctDia },
+  ], conVenta, ["Total", fmtMoney(t.blanco), fmtMoney(t.negro), fmtMoney(t.total), pctTxt(t.pctNegro)]);
+
+  // El total ya figura en las tarjetas y en la tabla: el recuadro final va solo si entra en la misma hoja
+  if (y + 18 <= H - 16) {
+    relleno(C.marca); doc.roundedRect(M, y, AN, 18, 2, 2, "F");
+    fuente(9, "bold"); color([200, 228, 225]); doc.text("TOTAL VENDIDO EN EL PERÍODO", M + 6, y + 7);
+    fuente(8.5); doc.text(`Blanco ${fmtMoney(t.blanco)}  ·  Negro ${fmtMoney(t.negro)} (${pctTxt(t.pctNegro)})`, M + 6, y + 13);
+    fuente(17, "bold"); color(C.blanco); doc.text(fmtMoney(t.total), W - M - 6, y + 12, { align: "right" });
+  }
+
+  const generado = new Date().toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" });
+  const paginas = doc.getNumberOfPages();
+  for (let i = 1; i <= paginas; i++) {
+    doc.setPage(i); trazo(C.linea); doc.line(M, H - 10, W - M, H - 10);
+    fuente(7.5); color(C.gris);
+    doc.text(`Facturero · ${archivo} · Generado el ${generado}`, M, H - 6);
+    doc.text(`Página ${i} de ${paginas}`, W - M, H - 6, { align: "right" });
+  }
+  doc.save(`facturero_ventas_${libro.desde}_a_${libro.hasta}.pdf`);
+}
+
+/** Excel: hoja Resumen, Por día (con fórmulas de total) y Comprobantes (todo el libro con su tipo blanco / negro). */
+export async function generarInformeVentasExcel({ libro, asignacion, sucursal, resumen }) {
+  const XLSX = await import("xlsx");
+  const { t, dias } = resumen;
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const fmt = (ws, cols, desdeFila = 1) => {
+    const rng = XLSX.utils.decode_range(ws["!ref"]);
+    for (let r = desdeFila; r <= rng.e.r; r++) for (const c of cols) { const cell = ws[XLSX.utils.encode_cell({ r, c })]; if (cell && cell.t === "n") cell.z = "#,##0.00"; }
+  };
+  const res = XLSX.utils.aoa_to_sheet([
+    ["Facturero — Informe de ventas (blanco y negro)"],
+    ["Período", `${fmtDate(libro.desde)} a ${fmtDate(libro.hasta)}`],
+    ["Negocio", [libro.empresa, sucursal].filter(Boolean).join(" · ")],
+    ["Generado", new Date().toLocaleString("es-AR")],
+    [],
+    ["", "Comprobantes", "Importe", "%"],
+    ["Ventas en blanco", t.nBlanco, r2(t.blanco), r2(100 - t.pctNegro) / 100],
+    ["Ventas en negro", t.nNegro, r2(t.negro), r2(t.pctNegro) / 100],
+    ["Total vendido", t.nBlanco + t.nNegro, r2(t.total), 1],
+    [],
+    ["IVA débito (blanco)", "", r2(t.ivaBlanco)],
+    ["Neto gravado (blanco)", "", r2(t.netoBlanco)],
+    ["Exento (blanco)", "", r2(t.exentoBlanco)],
+    ["Notas de crédito blanco (ya restadas)", "", r2(t.ncBlanco)],
+    ["Notas de crédito negro (ya restadas)", "", r2(t.ncNegro)],
+    [],
+    ["Punto de venta", "Tipo", "Importe"],
+    ...(resumen.pvs || pvsDelLibro(libro, asignacion)).map((p) => [p.pv, p.lado === "blanco" ? "Blanco" : "Negro", r2(p.total)]),
+  ]);
+  fmt(res, [2], 6);
+  for (const k of ["D7", "D8", "D9"]) if (res[k]) res[k].z = "0.0%";
+  res["!cols"] = [{ wch: 38 }, { wch: 14 }, { wch: 16 }, { wch: 10 }];
+
+  const conVenta = dias.filter((d) => d.blanco || d.negro);
+  const porDia = XLSX.utils.aoa_to_sheet([["Día", "Blanco", "Negro", "Total", "% negro"],
+    ...conVenta.map((d) => [new Date(d.fecha + "T00:00:00"), r2(d.blanco), r2(d.negro), r2(d.blanco + d.negro), d.blanco + d.negro ? d.negro / (d.blanco + d.negro) : 0])], { cellDates: true });
+  const n = conVenta.length, fin = n + 1;
+  XLSX.utils.sheet_add_aoa(porDia, [["Total"]], { origin: { r: n + 1, c: 0 } });
+  for (const [c, v] of [["B", t.blanco], ["C", t.negro], ["D", t.total]]) porDia[`${c}${n + 2}`] = { t: "n", f: n ? `SUM(${c}2:${c}${fin})` : "0", v: r2(v) };
+  porDia[`E${n + 2}`] = { t: "n", f: `IF(D${n + 2}=0,0,C${n + 2}/D${n + 2})`, v: t.total ? t.negro / t.total : 0 };
+  porDia["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: n + 1, c: 4 } });
+  fmt(porDia, [1, 2, 3]);
+  for (let r = 1; r <= n + 1; r++) {
+    const a = porDia[`A${r + 1}`]; if (a && a.t === "d") a.z = "dd/mm/yyyy";
+    const e = porDia[`E${r + 1}`]; if (e) e.z = "0.0%";
+  }
+  porDia["!cols"] = [{ wch: 12 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 10 }];
+
+  // El historial guardado no tiene el detalle de cada comprobante: esa hoja sale solo con el PDF recién leído
+  const comp = libro.filas && XLSX.utils.aoa_to_sheet([
+    ["Fecha", "Blanco / Negro", "Comprobante", "Punto de venta", "Número", "CUIT", "Cliente", "Neto", "Exento", "Percep. IVA", "IVA 10,5%", "IVA 21%", "IVA Otros", "Total"],
+    ...libro.filas.map((f) => [new Date(f.fecha + "T00:00:00"), asignacion[f.pv] === "blanco" ? "Blanco" : asignacion[f.pv] === "negro" ? "Negro" : "",
+      `${f.tipo} ${f.letra}`, f.pv, f.numero, f.cuit, f.cliente, f.neto, f.exento, f.percep, f.iva105, f.iva21, f.ivaOtros, f.total]),
+  ], { cellDates: true });
+  if (comp) {
+  fmt(comp, [7, 8, 9, 10, 11, 12, 13]);
+  for (let r = 1; r <= libro.filas.length; r++) { const a = comp[`A${r + 1}`]; if (a && a.t === "d") a.z = "dd/mm/yyyy"; }
+  comp["!cols"] = [{ wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 15 }, { wch: 28 }, ...Array(7).fill({ wch: 13 })];
+  comp["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: libro.filas.length, c: 13 } }) };
+  }
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, res, "Resumen");
+  XLSX.utils.book_append_sheet(wb, porDia, "Por día");
+  if (comp) XLSX.utils.book_append_sheet(wb, comp, "Comprobantes");
+  XLSX.writeFile(wb, `facturero_ventas_${libro.desde}_a_${libro.hasta}.xlsx`);
+}
+
+/* ---------- Ventas en blanco vs compras facturadas ---------- */
+const cobTxt = (g) => (g.cobertura == null ? "-" : `${g.cobertura.toLocaleString("es-AR", { maximumFractionDigits: 2 })}x`);
+const difTxt = (v) => `${v >= 0 ? "+" : ""}${fmtMoney(v)}`;
+
+export function generarComparativoPDF({ desde, hasta, foco, focoGrupo: g, general, sucs, dias }) {
+  const doc = new jsPDF();
+  const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 14, AN = W - 2 * M;
+  const C = { marca: [23, 96, 92], marcaSuave: [233, 242, 241], tinta: [18, 33, 28], gris: [93, 107, 100], linea: [216, 221, 215],
+    suave: [244, 246, 243], fact: [29, 113, 70], nc: [156, 51, 34], blanco: [255, 255, 255] };
+  const color = (c) => doc.setTextColor(...c), relleno = (c) => doc.setFillColor(...c), trazo = (c) => doc.setDrawColor(...c);
+  const fuente = (tam, estilo = "normal") => { doc.setFontSize(tam); doc.setFont("helvetica", estilo); };
+  const colorDif = (v) => (v >= 0 ? C.fact : C.nc);
+  const periodo = desde === hasta ? fmtDate(desde) : `${fmtDate(desde)} al ${fmtDate(hasta)}`;
+  let y = 0;
+  const salto = (alto) => {
+    if (y + alto <= H - 16) return false;
+    doc.addPage();
+    fuente(9, "bold"); color(C.marca); doc.text("Facturero", M, 12);
+    fuente(9); color(C.gris); doc.text(`Ventas vs compras · ${periodo} · ${foco}`, M + 19, 12);
+    trazo(C.marca); doc.setLineWidth(0.5); doc.line(M, 15, W - M, 15); doc.setLineWidth(0.2);
+    y = 23; return true;
+  };
+
+  relleno(C.marca); doc.rect(0, 0, W, 30, "F");
+  fuente(20, "bold"); color(C.blanco); doc.text("Facturero", M, 14);
+  fuente(11); doc.text("Ventas en blanco vs compras facturadas", M, 21);
+  fuente(13, "bold"); doc.text(periodo, W - M, 14, { align: "right" });
+  fuente(10); doc.text(foco, W - M, 21, { align: "right" });
+  y = 40;
+
+  const tarjetas = [
+    ["COMPRAS FACTURADAS", g.comprasBlanco, C.tinta, ""],
+    ["VENTAS EN BLANCO", g.ventasBlanco, C.fact, `Cobertura ${cobTxt(g)}`],
+    [g.dif >= 0 ? "VENDISTE EN BLANCO DE MÁS" : "TE FALTA VENDER EN BLANCO", Math.abs(g.dif), colorDif(g.dif), "ventas - compras"],
+  ];
+  const gap = 5, tw = (AN - gap * 2) / 3, th = 24;
+  tarjetas.forEach(([label, v, col, sub], i) => {
+    const x = M + i * (tw + gap);
+    relleno(i === 2 ? (g.dif >= 0 ? [229, 243, 234] : [248, 230, 226]) : C.blanco); trazo(C.linea); doc.roundedRect(x, y, tw, th, 2, 2, "FD");
+    relleno(col); doc.rect(x, y + 3, 1.6, th - 6, "F");
+    fuente(7.5, "bold"); color(C.gris); doc.text(label, x + 6, y + 7);
+    fuente(13.5, "bold"); color(i === 2 ? col : C.tinta); doc.text(fmtMoney(v), x + 6, y + 15.5);
+    if (sub) { fuente(7.5); color(C.gris); doc.text(sub, x + 6, y + 20.5); }
+  });
+  y += th + 8;
+  fuente(9); color(C.tinta);
+  doc.text(`Posición de IVA: débito ${fmtMoney(g.ivaDebito)} - crédito ${fmtMoney(g.ivaCredito)} = ${fmtMoney(Math.abs(g.saldoIva))} ${g.saldoIva >= 0 ? "a pagar" : "a favor"}`, M, y);
+  y += 5; color(C.gris);
+  doc.text(`En negro: ventas ${fmtMoney(g.ventasNegro)} · compras ${fmtMoney(g.comprasNegro)}`, M, y);
+  const sinVentas = dias.filter((d) => !d.hayVentas).length;
+  if (sinVentas) { y += 5; color(C.nc); doc.text(`Atención: ${sinVentas} ${sinVentas === 1 ? "día" : "días"} del período sin ventas guardadas.`, M, y); }
+  y += 10;
+
+  const tabla = (titulo, cols, filas, pie) => {
+    salto(30);
+    fuente(12, "bold"); color(C.marca); doc.text(titulo, M, y); y += 4;
+    let cx = M; for (const c of cols) { c.x = cx; cx += c.w; }
+    const celda = (col, s) => (col.num ? doc.text(String(s), col.x + col.w - 2, y, { align: "right" }) : doc.text(String(s), col.x + 2, y));
+    const encabezado = () => { relleno(C.marca); doc.rect(M, y, AN, 7.5, "F"); fuente(7.8, "bold"); color(C.blanco); y += 5; cols.forEach((c) => celda(c, c.label)); y += 2.5; };
+    encabezado();
+    filas.forEach((f, i) => {
+      if (salto(8)) encabezado();
+      if (i % 2) { relleno(C.suave); doc.rect(M, y, AN, 6.2, "F"); }
+      y += 4.3;
+      cols.forEach((c) => { fuente(8, c.fuerte ? "bold" : "normal"); color(c.col ? c.col(f) : C.tinta); celda(c, c.get(f)); });
+      y += 1.9;
+    });
+    if (pie) {
+      salto(10);
+      relleno(C.marcaSuave); doc.rect(M, y, AN, 7.2, "F");
+      trazo(C.marca); doc.setLineWidth(0.5); doc.line(M, y, W - M, y); doc.setLineWidth(0.2);
+      y += 4.9; fuente(8, "bold");
+      cols.forEach((c, i) => { color(i === 0 ? C.marca : c.col ? c.col(pie) : C.tinta); celda(c, c.get(pie)); });
+      y += 2.3;
+    }
+    y += 10;
+  };
+
+  if (sucs.length > 1) {
+    tabla("Por sucursal", [
+      { label: "Sucursal", w: 38, get: (s) => s.nombre },
+      { label: "Compras fact.", w: 28, num: true, get: (s) => fmtMoney(s.comprasBlanco) },
+      { label: "Ventas blanco", w: 28, num: true, get: (s) => fmtMoney(s.ventasBlanco) },
+      { label: "Diferencia", w: 28, num: true, fuerte: true, col: (s) => colorDif(s.dif), get: (s) => difTxt(s.dif) },
+      { label: "Cobert.", w: 16, num: true, get: cobTxt },
+      { label: "Saldo IVA", w: AN - 138, num: true, get: (s) => fmtMoney(s.saldoIva) },
+    ], sucs, { nombre: "General", ...general });
+    const arriba = sucs.filter((s) => s.dif > 0), abajo = sucs.filter((s) => s.dif < 0);
+    if (arriba.length && abajo.length) {
+      fuente(8.5); color(C.nc);
+      doc.splitTextToSize(`Desequilibrio: ${arriba.map((s) => `${s.nombre} vende en blanco ${fmtMoney(s.dif)} más de lo que compra`).join("; ")}; ${abajo.map((s) => `${s.nombre} vende ${fmtMoney(-s.dif)} menos`).join("; ")}.`, AN)
+        .forEach((l) => { salto(5); doc.text(l, M, y); y += 4.5; });
+      y += 6;
+    }
+  }
+
+  tabla("Día por día", [
+    { label: "Día", w: 28, get: (d) => fmtDate(d.fecha) + (d.hayVentas ? "" : " *") },
+    { label: "Compras fact.", w: 36, num: true, get: (d) => fmtMoney(d.comprasBlanco) },
+    { label: "Ventas blanco", w: 36, num: true, col: () => C.fact, get: (d) => fmtMoney(d.ventasBlanco) },
+    { label: "Dif. del día", w: 38, num: true, col: (d) => colorDif(d.ventasBlanco - d.comprasBlanco), get: (d) => difTxt(d.ventasBlanco - d.comprasBlanco) },
+    { label: "Acumulado", w: AN - 138, num: true, fuerte: true, col: (d) => colorDif(d.acumDif), get: (d) => difTxt(d.acumDif) },
+  ], dias.filter((d) => d.comprasBlanco || d.ventasBlanco || !d.hayVentas));
+  if (sinVentas) { fuente(7.5); color(C.gris); doc.text("* Día sin ventas guardadas.", M, y - 6); }
+
+  const generado = new Date().toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" });
+  const paginas = doc.getNumberOfPages();
+  for (let i = 1; i <= paginas; i++) {
+    doc.setPage(i); trazo(C.linea); doc.line(M, H - 10, W - M, H - 10);
+    fuente(7.5); color(C.gris);
+    doc.text(`Facturero · Generado el ${generado}`, M, H - 6);
+    doc.text(`Página ${i} de ${paginas}`, W - M, H - 6, { align: "right" });
+  }
+  doc.save(`facturero_ventas_vs_compras_${desde}_a_${hasta}.pdf`);
+}
+
+export async function generarComparativoExcel({ desde, hasta, foco, general, sucs, dias }) {
+  const XLSX = await import("xlsx");
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const money = (ws) => { for (const k of Object.keys(ws)) if (!k.startsWith("!") && ws[k].t === "n" && !ws[k].z) ws[k].z = "#,##0.00"; };
+  const fila = (nombre, g) => [nombre, r2(g.comprasBlanco), r2(g.ventasBlanco), r2(g.dif), g.cobertura == null ? "" : r2(g.cobertura), r2(g.ivaDebito), r2(g.ivaCredito), r2(g.saldoIva), r2(g.comprasNegro), r2(g.ventasNegro)];
+  const res = XLSX.utils.aoa_to_sheet([
+    ["Facturero — Ventas en blanco vs compras facturadas"],
+    ["Período", `${fmtDate(desde)} a ${fmtDate(hasta)}`], ["Vista", foco], [],
+    ["Sucursal", "Compras facturadas", "Ventas en blanco", "Diferencia", "Cobertura (veces)", "IVA débito", "IVA crédito", "Saldo IVA", "Compras negro", "Ventas negro"],
+    ...sucs.map((s) => fila(s.nombre, s)), fila("General", general),
+  ]);
+  for (let r = 6; r <= 6 + sucs.length; r++) { const c = res[`E${r}`]; if (c && c.t === "n") c.z = "0.00"; }
+  money(res);
+  res["!cols"] = [{ wch: 22 }, ...Array(9).fill({ wch: 17 })];
+  const dd = XLSX.utils.aoa_to_sheet([["Día", "Compras facturadas", "Ventas en blanco", "Diferencia del día", "Acumulado compras", "Acumulado ventas", "Acumulado diferencia", "¿Ventas cargadas?"],
+    ...dias.map((d) => [new Date(d.fecha + "T00:00:00"), r2(d.comprasBlanco), r2(d.ventasBlanco), r2(d.ventasBlanco - d.comprasBlanco), r2(d.acumCompras), r2(d.acumVentas), r2(d.acumDif), d.hayVentas ? "Sí" : "No"])], { cellDates: true });
+  for (let r = 2; r <= dias.length + 1; r++) { const a = dd[`A${r}`]; if (a && a.t === "d") a.z = "dd/mm/yyyy"; }
+  money(dd);
+  dd["!cols"] = [{ wch: 12 }, ...Array(6).fill({ wch: 18 }), { wch: 16 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, res, "Resumen");
+  XLSX.utils.book_append_sheet(wb, dd, "Día por día");
+  XLSX.writeFile(wb, `facturero_ventas_vs_compras_${desde}_a_${hasta}.xlsx`);
+}

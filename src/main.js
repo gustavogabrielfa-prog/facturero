@@ -5,8 +5,9 @@ import {
   IMPUESTOS, computeTotals, groupBy, groupByPeriod, periodLabel,
   periodKey, periodKeysBetween, periodShort, fmtCompact, parseMonto, formatMontoTexto, montoTexto, numeroNorm, signo,
 } from "./format.js";
-import { generarReportePDF, generarReporteExcel, generarInformeArca } from "./pdf.js";
+import { generarReportePDF, generarReporteExcel, generarInformeArca, generarInformeVentasPDF, generarInformeVentasExcel, generarComparativoPDF, generarComparativoExcel } from "./pdf.js";
 import { leerArchivoArca, compararArca, rangoArca } from "./arca.js";
+import { leerLibroVentas, puntosDeVenta, resumenVentas, filasParaGuardar, resumenGuardado, compararVentasCompras } from "./ventas.js";
 
 /* ---------- STATE ---------- */
 const state = {
@@ -50,6 +51,14 @@ let dupBuscando = false;
 
 // Compara ARCA (admin): filas del archivo, resultado y comprobantes usados en la comparación
 let arcaFilas = null, arcaArchivo = "", arcaRes = null, arcaComps = [], arcaCargando = false, arcaError = "";
+// Ventas: libro de IVA ventas leído en el navegador (no se guarda) y qué punto de venta es blanco o negro
+let ventasLibro = null, ventasArchivo = "", ventasCargando = false, ventasError = "", ventasSucursal = "";
+let ventasPV = {};   // { "0006": "blanco", "0099": "negro" }, se vuelve a preguntar con cada PDF
+let ventasGuardando = false;
+// Sucursal detectada por los puntos de venta ya guardados: { id, pv } | { varias: [ids] } | null
+let ventasDetectada = null;
+let ventasManual = { sucursal: "", fecha: todayISO(), blanco: "", negro: "", iva: "", guardando: false };
+let ventasHist = { desde: monthRange()[0], hasta: monthRange()[1], suc: "todas", rows: null, cargando: false, error: "" };
 let provNuevoPendiente = null;   // { nombre, cuit } para precargar "+ Nuevo" al cargar desde ARCA
 let chartGran = null;   // null = automático según el rango de fechas
 let chartData = null;   // columnas del gráfico, para el tooltip
@@ -255,7 +264,9 @@ async function onSession(session) {
   if (!session) {
     unsubscribeRealtime();
     Object.assign(state, { perfil: null, sucursales: [], proveedores: [], booting: false, bootError: "" });
-    comprobantes = []; listLoaded = false; draft = null; editId = null; ultimoProveedorId = ""; ultimaFecha = ""; busqueda = ""; busqResultados = null; arcaFilas = null; arcaRes = null; arcaComps = [];
+    comprobantes = []; listLoaded = false; draft = null; editId = null; ultimoProveedorId = ""; ultimaFecha = ""; ventasLibro = null; ventasPV = {}; ventasDetectada = null; ventasSucursal = "";
+    ventasHist = { ...ventasHist, rows: null, todas: null, compras: null, error: "" }; ventasManual = { ...ventasManual, sucursal: "", blanco: "", negro: "", iva: "" };
+    busqueda = ""; busqResultados = null; arcaFilas = null; arcaRes = null; arcaComps = [];
     hoy = []; hoyLoaded = false; clearTimeout(medianocheTimer);
     render(); return;
   }
@@ -282,9 +293,11 @@ function render() {
 
   if (route === "listado" && !veListado()) route = "subir";
   if (route === "arca" && !esAdmin()) route = "subir";
+  if (route === "ventas" && !veListado()) route = "subir";
   let body;
   if (route === "listado") body = pageListado();
   else if (route === "arca") body = pageArca();
+  else if (route === "ventas") body = pageVentas();
   else if (route === "proveedores") body = pageProveedores();
   else { route = "subir"; body = pageSubir(); }
 
@@ -297,6 +310,7 @@ function render() {
 
   if (route === "listado" && !listLoaded && !listLoading) loadComprobantes();
   if (route === "subir") { if (hoyLoaded) renderHoy(); else loadHoy(); }
+  if (route === "ventas" && ventasHist.rows === null && !ventasHist.cargando && !ventasHist.error) cargarHistVentas();
 }
 
 function shell(bodyHtml, logged, tabs = false) {
@@ -306,7 +320,7 @@ function shell(bodyHtml, logged, tabs = false) {
       : sucursalNombre(state.perfil.sucursal_id)
     : "";
   return `
-  <div class="wrap${logged && (route === "listado" || route === "subir" || route === "proveedores" || route === "arca") ? " ancho ruta-" + route : ""}">
+  <div class="wrap${logged && (route === "listado" || route === "subir" || route === "proveedores" || route === "arca" || route === "ventas") ? " ancho ruta-" + route : ""}">
     <div class="pivote">
     <header class="top">
       <div class="brand"><div class="brand-mark">F</div><div class="brand-name">Facturero</div></div>
@@ -320,6 +334,7 @@ function shell(bodyHtml, logged, tabs = false) {
       <button data-route="proveedores" class="${route === "proveedores" ? "active" : ""}">🏷 Proveedores</button>
       ${veListado() ? `<button data-route="listado" class="${route === "listado" ? "active" : ""}">🗂 Listado</button>` : ""}
       ${esAdmin() ? `<button data-route="arca" class="${route === "arca" ? "active" : ""}">🧾 Compara ARCA</button>` : ""}
+      ${veListado() ? `<button data-route="ventas" class="${route === "ventas" ? "active" : ""}">💵 Ventas</button>` : ""}
     </div>` : ""}
     </div>
     ${bodyHtml}
@@ -1189,6 +1204,442 @@ function pageArca() {
   `;
 }
 
+/* ---------- VENTAS (admin): libro de IVA ventas, blanco / negro por punto de venta ---------- */
+const pct = (n) => `${n.toLocaleString("es-AR", { maximumFractionDigits: 1 })}%`;
+
+/** Barras por día: blanco (verde) abajo y negro (naranja) arriba, con el total al pasar el mouse. */
+function chartVentas(dias) {
+  const max = Math.max(0, ...dias.map((d) => Math.max(0, d.blanco) + Math.max(0, d.negro)));
+  if (!max) return "";
+  const step = niceStep(max), top = Math.ceil(max / step) * step;
+  const ticks = []; for (let v = 0; v <= top + step / 2; v += step) ticks.push(v);
+  const h = (v) => (Math.max(0, v) / top) * 100;
+  const every = Math.max(1, Math.ceil(dias.length / 10));
+  return `<div class="panel chart-panel mb16">
+    <div class="chart-head"><div class="chart-legend"><span><i class="sw fact"></i>Blanco</span><span><i class="sw nofact"></i>Negro</span></div></div>
+    <div class="chart">
+      <div class="chart-y">${ticks.map((v) => `<span style="bottom:${h(v)}%">${v ? fmtCompact(v) : "0"}</span>`).join("")}</div>
+      <div class="chart-scroll"><div class="chart-plot" style="min-width:${dias.length * 12}px"><div class="chart-cols">
+        ${ticks.map((v) => `<div class="chart-grid" style="bottom:${h(v)}%"></div>`).join("")}
+        ${dias.map((d, i) => `<div class="chart-col" title="${fmtDate(d.fecha)} · Blanco ${fmtMoney(d.blanco)} · Negro ${fmtMoney(d.negro)} · Total ${fmtMoney(d.blanco + d.negro)}">
+          <div class="chart-bar" style="height:${h(d.blanco) + h(d.negro)}%">
+            ${d.negro > 0 ? `<div class="seg nofact" style="flex:${d.negro}"></div>` : ""}
+            ${d.blanco > 0 ? `<div class="seg fact" style="flex:${d.blanco}"></div>` : ""}
+          </div>
+          ${i % every === 0 ? `<div class="chart-x">${d.fecha.slice(8, 10)}/${d.fecha.slice(5, 7)}</div>` : ""}
+        </div>`).join("")}
+      </div></div></div>
+    </div>
+  </div>`;
+}
+
+function pageVentas() {
+  const L = ventasLibro;
+  const pvs = L ? puntosDeVenta(L.filas) : [];
+  const faltan = pvs.filter((p) => ventasPV[p.pv] !== "blanco" && ventasPV[p.pv] !== "negro");
+  const r = L && !faltan.length ? resumenVentas(L, ventasPV) : null;
+  return `
+  <div class="pagehead"><h1 class="serif">Ventas</h1><p>${esAdmin()
+    ? "Subí el Libro de IVA Ventas del sistema de la farmacia o cargá las ventas del día a mano."
+    : "Cargá las ventas del día de " + esc(sucursalNombre(state.perfil.sucursal_id)) + " y compará con lo comprado."}</p></div>
+
+  ${esAdmin() ? `<div class="trip trip2">
+  <section class="trip-col">
+  <div class="trip-h">1 · Libro de IVA Ventas (PDF)</div>
+  <div class="panel mb16" style="padding:16px;">
+    <ol class="arca-pasos">
+      <li>En el sistema de la farmacia sacá el <b>Libro de IVA Ventas</b> del período en <b>PDF</b>.</li>
+      <li>Subilo acá. Se lee en tu navegador: el archivo no se guarda.</li>
+      <li>Elegí <b>Blanco</b> o <b>Negro</b> para cada punto de venta.</li>
+    </ol>
+    <input type="file" id="ventasFile" accept=".pdf,application/pdf" style="display:none;">
+    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+      <button class="btn small" id="btnVentasFile" ${ventasCargando ? "disabled" : ""}>${ventasCargando ? "Leyendo…" : "📤 Subir PDF de ventas"}</button>
+      <select id="ventasSuc" class="ventas-suc" title="Sucursal del libro">
+        <option value="">Sucursal: sin indicar</option>
+        ${state.sucursales.map((s) => `<option value="${s.id}" ${ventasSucursal === s.id ? "selected" : ""}>${esc(s.nombre)}</option>`).join("")}
+      </select>
+    </div>
+    ${L ? `<div class="hint" style="margin-top:10px;">Archivo: <b>${esc(ventasArchivo)}</b> · ${esc(L.empresa)} · ${L.filas.length} comprobantes · del ${fmtDate(L.desde)} al ${fmtDate(L.hasta)}</div>
+    ${L.cuadra === true ? `<div class="ventas-ok">✓ La suma de los comprobantes coincide con el total del PDF (${fmtMoney(L.totalPdf)}).</div>`
+      : L.cuadra === false ? `<div class="dup-aviso warn" style="margin-top:8px;">La suma leída (${fmtMoney(L.suma)}) no coincide con el total del PDF (${fmtMoney(L.totalPdf)}). Revisá el archivo.</div>` : ""}
+    ${L.avisos.length ? `<div class="dup-aviso warn" style="margin-top:8px;">${L.avisos.slice(0, 5).map(esc).join("<br>")}</div>` : ""}` : ""}
+    ${L && ventasDetectada?.id ? `<div class="hint" style="margin:8px 0 0;">${ventasDetectada.id === ventasSucursal
+      ? `✓ Sucursal detectada por el punto de venta <b>${esc(ventasDetectada.pv)}</b>: ${esc(sucursalNombre(ventasDetectada.id))}.`
+      : `⚠️ Por el punto de venta <b>${esc(ventasDetectada.pv)}</b> este libro parece de <b>${esc(sucursalNombre(ventasDetectada.id))}</b>.`}</div>`
+      : L && ventasDetectada?.varias ? `<div class="dup-aviso warn" style="margin-top:8px;">Los puntos de venta de este PDF ya figuran en más de una sucursal (${ventasDetectada.varias.map((id) => esc(sucursalNombre(id))).join(", ")}). Elegí la sucursal con cuidado.</div>`
+      : L ? `<div class="hint" style="margin:8px 0 0;">Elegí la sucursal. La próxima vez se va a detectar sola por el punto de venta.</div>` : ""}
+    ${ventasError ? `<div class="dup-aviso err" style="margin-top:10px;">${esc(ventasError)}</div>` : ""}
+  </div>
+
+  ${L ? `<div class="trip-h">2 · Puntos de venta</div>
+  <div class="panel mb16" style="padding:12px 16px;">
+    ${pvs.map((p) => `<div class="pv-row">
+      <div class="pv-info"><b>Punto de venta ${esc(p.pv)}</b><small>${p.n} comprobantes${p.nc ? ` (${p.nc} N. crédito)` : ""} · ${fmtMoney(p.total)}</small></div>
+      <div class="badge-group pv-sel">
+        <button data-pv="${p.pv}" data-lado="blanco" class="${ventasPV[p.pv] === "blanco" ? "active fact" : ""}">Blanco</button>
+        <button data-pv="${p.pv}" data-lado="negro" class="${ventasPV[p.pv] === "negro" ? "active nofact" : ""}">Negro</button>
+      </div>
+    </div>`).join("")}
+    ${faltan.length ? `<div class="hint" style="margin:8px 0 0;">Elegí Blanco o Negro para ${faltan.length === 1 ? "el punto de venta " + esc(faltan[0].pv) : "cada punto de venta"} para ver el resultado.</div>` : ""}
+  </div>` : ""}
+  </section>
+
+  <section class="trip-col">
+  <div class="trip-h">3 · Resultado</div>
+  ${!L ? `<div class="empty-state panel">Subí el PDF de ventas para ver blanco y negro.</div>`
+    : !r ? `<div class="empty-state panel">Falta elegir Blanco o Negro en los puntos de venta.</div>` : `
+  ${resultadoVentas(r, { pdf: "btnVentasPdf", xls: "btnVentasXls", extra: `<button class="btn small" id="btnVentasGuardar" ${ventasGuardando ? "disabled" : ""}>${ventasGuardando ? "Guardando…" : "💾 Guardar en Facturero"}</button>` })}
+  <div class="hint" style="margin-top:8px;">Al guardar se registran los totales por día y punto de venta (no el PDF)${ventasSucursal ? ` en <b>${esc(sucursalNombre(ventasSucursal))}</b>` : ". Elegí la sucursal arriba"}. Si ese período ya estaba guardado, se reemplaza.</div>`}
+  </section>
+  </div>` : ""}
+
+  <section class="comp-full">
+  <div class="trip-h">${esAdmin() ? 4 : 1} · Carga manual</div>
+  ${cargaManualHtml()}
+  </section>
+
+  <section class="comp-full">
+  <div class="trip-h">${esAdmin() ? 5 : 2} · Historial guardado</div>
+  ${historialVentasHtml()}
+  </section>
+
+  <section class="comp-full">
+  <div class="trip-h">${esAdmin() ? 6 : 3} · Ventas en blanco vs compras facturadas</div>
+  ${comparativoHtml()}
+  </section>
+  `;
+}
+
+/** Tarjetas, barra blanco / negro, IVA, gráfico, botones y tabla por día (sirve para el PDF leído y para el historial). */
+function resultadoVentas(r, { pdf, xls, extra = "" }) {
+  const kpi = (label, v, sub = "") => `<div class="kpi"><div class="kpi-label">${label}</div><div class="kpi-value">${v}</div>${sub ? `<div class="total-sub">${sub}</div>` : ""}</div>`;
+  return `
+  <div class="kpi-row ventas-kpis">
+    ${kpi("Ventas en blanco", fmtMoney(r.t.blanco), `${r.t.nBlanco} comprob. · ${pct(100 - r.t.pctNegro)}`)}
+    ${kpi("Ventas en negro", fmtMoney(r.t.negro), `${r.t.nNegro} comprob. · ${pct(r.t.pctNegro)}`)}
+    ${kpi("Total vendido", fmtMoney(r.t.total))}
+  </div>
+  <div class="ventas-barra" title="Blanco ${pct(100 - r.t.pctNegro)} · Negro ${pct(r.t.pctNegro)}">
+    <i class="seg fact" style="width:${100 - r.t.pctNegro}%"></i><i class="seg nofact" style="width:${r.t.pctNegro}%"></i>
+  </div>
+  <div class="ventas-iva">IVA débito (blanco): <b>${fmtMoney(r.t.ivaBlanco)}</b> · Neto gravado <b>${fmtMoney(r.t.netoBlanco)}</b> · Exento <b>${fmtMoney(r.t.exentoBlanco)}</b>${r.t.ncBlanco || r.t.ncNegro ? ` · Notas de crédito: blanco <b>${fmtMoney(r.t.ncBlanco)}</b>, negro <b>${fmtMoney(r.t.ncNegro)}</b> (ya restadas)` : ""}</div>
+  ${chartVentas(r.dias)}
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+    ${extra}
+    <button class="btn ${extra ? "secondary " : ""}small" id="${pdf}">📄 Informe PDF</button>
+    <button class="btn secondary small" id="${xls}">📊 Excel</button>
+  </div>
+  <div class="hoy-wrap"><table class="data-table">
+    <thead><tr><th>Día</th><th>Blanco</th><th>Negro</th><th>Total</th><th>% negro</th></tr></thead>
+    <tbody>${r.dias.filter((d) => d.blanco || d.negro).map((d) => `<tr>
+      <td>${fmtDate(d.fecha)}</td><td class="fact">${fmtMoney(d.blanco)}</td><td class="nofact">${fmtMoney(d.negro)}</td>
+      <td class="tot">${fmtMoney(d.blanco + d.negro)}</td><td>${pct(d.blanco + d.negro ? (d.negro / (d.blanco + d.negro)) * 100 : 0)}</td>
+    </tr>`).join("")}
+    <tr class="ventas-tot"><td>Total</td><td class="fact">${fmtMoney(r.t.blanco)}</td><td class="nofact">${fmtMoney(r.t.negro)}</td><td class="tot">${fmtMoney(r.t.total)}</td><td>${pct(r.t.pctNegro)}</td></tr>
+    </tbody>
+  </table></div>`;
+}
+
+/** Historial: lo guardado en ventas_diarias, con filtro de fechas y sucursal. */
+function historialVentasHtml() {
+  const h = ventasHist;
+  const r = h.rows ? resumenGuardado(h.rows, h.desde, h.hasta) : null;
+  const porSuc = h.rows && h.suc === "todas" ? state.sucursales.map((s) => {
+    const rows = h.rows.filter((x) => x.sucursal_id === s.id);
+    return rows.length ? { s, ...resumenGuardado(rows, h.desde, h.hasta).t } : null;
+  }).filter(Boolean) : [];
+  return `<div class="panel mb16" style="padding:16px;">
+    <div class="filters">${[["mes", "Este mes"], ["mesAnt", "Mes anterior"], ["año", "Este año"]].map(([k, l]) => `<button data-vrango="${k}">${l}</button>`).join("")}</div>
+    <div class="row2">
+      <div class="field" style="margin-bottom:12px;"><label>Desde</label><input type="date" id="vhDesde" value="${h.desde}"></div>
+      <div class="field" style="margin-bottom:12px;"><label>Hasta</label><input type="date" id="vhHasta" value="${h.hasta}"></div>
+    </div>
+    ${esGerente() ? "" : `<div class="filters" style="margin-bottom:0;">
+      <button data-vsuc="todas" class="${h.suc === "todas" ? "active" : ""}">Todas las sucursales</button>
+      ${state.sucursales.map((s) => `<button data-vsuc="${s.id}" class="${h.suc === s.id ? "active" : ""}">${esc(s.nombre)}</button>`).join("")}
+    </div>`}
+  </div>
+  ${h.cargando ? `<div class="loading">Cargando ventas guardadas…</div>`
+    : h.error ? `<div class="dup-aviso err">${esc(h.error)}</div>`
+    : !h.rows ? ""
+    : !h.rows.length ? `<div class="empty-state panel">No hay ventas guardadas en ese período${h.suc !== "todas" ? " para " + esc(sucursalNombre(h.suc)) : ""}.</div>`
+    : `${porSuc.length > 1 ? `<div class="hoy-wrap mb16"><table class="data-table">
+        <thead><tr><th>Sucursal</th><th>Blanco</th><th>Negro</th><th>Total</th><th>% negro</th></tr></thead>
+        <tbody>${porSuc.map((x) => `<tr><td>${sucursalTag(x.s.id)}</td><td class="fact">${fmtMoney(x.blanco)}</td><td class="nofact">${fmtMoney(x.negro)}</td><td class="tot">${fmtMoney(x.total)}</td><td>${pct(x.pctNegro)}</td></tr>`).join("")}</tbody>
+      </table></div>` : ""}
+      ${resultadoVentas(r, { pdf: "btnVhPdf", xls: "btnVhXls" })}`}`;
+}
+
+/** Trae lo guardado en ventas_diarias para el período y sucursal del historial. */
+async function cargarHistVentas() {
+  const h = ventasHist;
+  if (esGerente()) h.suc = state.perfil.sucursal_id;
+  h.cargando = true; h.error = ""; if (route === "ventas") render();
+  try {
+    // Siempre se traen todas las sucursales: la comparación con compras muestra cada una y el general
+    const [ventas, compras] = await Promise.all([
+      fetchAll(() => sb.from("ventas_diarias").select("*").gte("fecha", h.desde).lte("fecha", h.hasta).order("fecha")),
+      fetchAll(() => sb.from("comprobantes").select("fecha, sucursal_id, grupo, tipo, monto, iva21, iva105, iva27, iva5, iva25")
+        .gte("fecha", h.desde).lte("fecha", h.hasta).order("fecha")),
+    ]);
+    h.todas = ventas; h.compras = compras;
+    h.rows = h.suc === "todas" ? ventas : ventas.filter((r) => r.sucursal_id === h.suc);
+  } catch (e) { h.rows = null; h.error = errorMsg(e); }
+  h.cargando = false; if (route === "ventas") render();
+}
+
+/** Guarda los totales del PDF leído (por día y punto de venta); reemplaza ese período de esa sucursal. */
+/**
+ * Busca en lo ya guardado de qué sucursal es cada punto de venta del PDF. Los que figuran en una sola sucursal
+ * (el de blanco, que es propio de cada una) la identifican; los compartidos (como el 0099 de negro) se ignoran.
+ */
+async function detectarSucursalVentas() {
+  ventasDetectada = null;
+  const pvs = puntosDeVenta(ventasLibro.filas).map((p) => p.pv);
+  const conf = state.sucursales.filter((x) => x.pv_blanco && pvs.includes(x.pv_blanco));
+  if (conf.length === 1) { ventasDetectada = { id: conf[0].id, pv: conf[0].pv_blanco }; ventasSucursal = conf[0].id; return; }
+  if (conf.length > 1) { ventasDetectada = { varias: conf.map((x) => x.id) }; return; }
+  const { data, error } = await sb.from("ventas_diarias").select("pv, sucursal_id").in("pv", pvs).limit(5000);
+  if (error || !data?.length) return;
+  const porPv = {};
+  for (const r of data) (porPv[r.pv] ||= new Set()).add(r.sucursal_id);
+  const propios = Object.entries(porPv).filter(([, set]) => set.size === 1).map(([pv, set]) => ({ pv, id: [...set][0] }));
+  const ids = [...new Set(propios.map((x) => x.id))];
+  if (ids.length === 1) { ventasDetectada = propios[0]; ventasSucursal = propios[0].id; }
+  else if (ids.length > 1) ventasDetectada = { varias: ids };
+}
+
+async function guardarVentas() {
+  const L = ventasLibro;
+  if (!ventasSucursal) { toast("Elegí de qué sucursal es el libro antes de guardar."); document.getElementById("ventasSuc")?.focus(); return; }
+  if (ventasDetectada?.id && ventasDetectada.id !== ventasSucursal
+    && !(await dialogo(`Por el punto de venta ${ventasDetectada.pv} este libro parece de ${sucursalNombre(ventasDetectada.id)}, pero elegiste ${sucursalNombre(ventasSucursal)}. ¿Guardarlo igual en ${sucursalNombre(ventasSucursal)}?`, { aceptar: "Guardar igual" }))) return;
+  const { count, error: e1 } = await sb.from("ventas_diarias").select("id", { count: "exact", head: true })
+    .eq("sucursal_id", ventasSucursal).gte("fecha", L.desde).lte("fecha", L.hasta);
+  if (e1) { toast(errorMsg(e1)); return; }
+  if (count && !(await dialogo(`${sucursalNombre(ventasSucursal)} ya tiene ventas guardadas entre el ${fmtDate(L.desde)} y el ${fmtDate(L.hasta)}. ¿Reemplazarlas con este PDF?`, { aceptar: "Reemplazar" }))) return;
+  ventasGuardando = true; render();
+  const { data, error } = await sb.rpc("guardar_ventas", { p_sucursal: ventasSucursal, p_desde: L.desde, p_hasta: L.hasta, p_filas: filasParaGuardar(L, ventasPV, ventasArchivo) });
+  ventasGuardando = false;
+  if (error) { toast(errorMsg(error)); render(); return; }
+  toast(`Ventas guardadas: ${data} ${data === 1 ? "registro" : "registros"} de ${sucursalNombre(ventasSucursal)}.`);
+  ventasHist = { ...ventasHist, desde: L.desde, hasta: L.hasta, suc: ventasSucursal, rows: null };
+  cargarHistVentas();
+}
+
+function datosHistVentas() {
+  const h = ventasHist;
+  return {
+    libro: { desde: h.desde, hasta: h.hasta, empresa: "" }, asignacion: {}, archivo: "Historial guardado",
+    sucursal: h.suc === "todas" ? "Todas las sucursales" : sucursalNombre(h.suc),
+    resumen: resumenGuardado(h.rows || [], h.desde, h.hasta),
+  };
+}
+
+/** Línea acumulada día a día: compras facturadas vs ventas en blanco (SVG, se adapta al ancho). */
+function chartAcumulado(dias) {
+  const max = Math.max(1, ...dias.map((d) => Math.max(d.acumVentas, d.acumCompras)));
+  const W = 600, H = 170, pad = 4;
+  const x = (i) => (dias.length < 2 ? W / 2 : pad + (i / (dias.length - 1)) * (W - 2 * pad));
+  const y = (v) => H - pad - (Math.max(0, v) / max) * (H - 2 * pad);
+  const linea = (campo) => dias.map((d, i) => `${x(i).toFixed(1)},${y(d[campo]).toFixed(1)}`).join(" ");
+  const every = Math.max(1, Math.ceil(dias.length / 8));
+  return `<div class="panel chart-panel mb16">
+    <div class="chart-head">
+      <div class="prov-title">Acumulado del período</div>
+      <div class="chart-legend"><span><i class="sw fact"></i>Ventas en blanco</span><span><i class="sw comp"></i>Compras facturadas</span></div>
+    </div>
+    <div class="acum-wrap">
+      <div class="acum-y"><span>${fmtCompact(max)}</span><span>${fmtCompact(max / 2)}</span><span>0</span></div>
+      <div class="acum-plot">
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="acum-svg" role="img" aria-label="Acumulado de ventas en blanco y compras facturadas">
+          <line x1="0" x2="${W}" y1="${y(max / 2)}" y2="${y(max / 2)}" class="acum-grid"/>
+          <line x1="0" x2="${W}" y1="${y(0)}" y2="${y(0)}" class="acum-grid base"/>
+          <polyline points="${linea("acumCompras")}" class="acum-compras"/>
+          <polyline points="${linea("acumVentas")}" class="acum-ventas"/>
+        </svg>
+        <div class="acum-x">${dias.map((d, i) => (i % every === 0 || (i === dias.length - 1 && i % every >= every / 2))
+          ? `<span style="left:${(x(i) / W) * 100}%">${d.fecha.slice(8, 10)}/${d.fecha.slice(5, 7)}</span>` : "").join("")}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/** Ventas en blanco vs compras facturadas: general, por sucursal, equilibrio y acumulado por día. */
+function comparativoHtml() {
+  const h = ventasHist;
+  if (h.cargando || h.error || !h.todas) return "";
+  const ids = state.sucursales.map((s) => s.id);
+  const cmp = compararVentasCompras(h.todas, h.compras || [], h.desde, h.hasta, ids);
+  const G = cmp.grupos.general;
+  if (!G.ventasBlanco && !G.comprasBlanco && !G.ventasNegro && !G.comprasNegro) return `<div class="empty-state panel">No hay ventas ni compras en ese período.</div>`;
+  const sucs = state.sucursales.filter((s) => { const g = cmp.grupos[s.id]; return g && (g.ventasBlanco || g.comprasBlanco || g.ventasNegro || g.comprasNegro); });
+  const cob = (g) => (g.cobertura == null ? "—" : `${g.cobertura.toLocaleString("es-AR", { maximumFractionDigits: 2 })}×`);
+  const dif = (v) => `<span class="${v >= 0 ? "dif-pos" : "dif-neg"}">${v >= 0 ? "+" : ""}${fmtMoney(v)}</span>`;
+  // foco: la sucursal elegida en el historial, o el general
+  const foco = h.suc !== "todas" && cmp.grupos[h.suc] ? cmp.grupos[h.suc] : G;
+  const focoNombre = h.suc !== "todas" ? sucursalNombre(h.suc) : "En general";
+  // dias para el acumulado: de la sucursal elegida o de todas
+  const dias = h.suc === "todas" ? cmp.dias
+    : compararVentasCompras(h.todas.filter((r) => r.sucursal_id === h.suc), (h.compras || []).filter((c) => c.sucursal_id === h.suc), h.desde, h.hasta, [h.suc]).dias;
+  // días sin ventas guardadas, contados por sucursal (un día cargado solo en una no cuenta para la otra)
+  const faltantes = (h.suc === "todas" ? sucs : state.sucursales.filter((x) => x.id === h.suc)).map((x) => {
+    const conVentas = new Set(h.todas.filter((r) => r.sucursal_id === x.id).map((r) => r.fecha));
+    return [x.nombre, dias.filter((d) => !conVentas.has(d.fecha)).length];
+  }).filter(([, k]) => k > 0);
+  const arriba = sucs.filter((s) => cmp.grupos[s.id].dif > 0), abajo = sucs.filter((s) => cmp.grupos[s.id].dif < 0);
+  // cómo vino el acumulado: siempre arriba, desde qué día pasó adelante, o si termina abajo
+  const conMov = dias.filter((d) => d.acumCompras || d.acumVentas);
+  const ultimo = conMov[conMov.length - 1];
+  let marcha = "";
+  if (ultimo && ultimo.acumCompras > 0) {
+    if (ultimo.acumDif < 0) marcha = ` · Al cierre del período las ventas en blanco quedan <b>${fmtMoney(-ultimo.acumDif)}</b> por debajo de las compras`;
+    else {
+      let desde = null;
+      conMov.forEach((d, i) => { if (d.acumDif >= 0 && (i === 0 || conMov[i - 1].acumDif < 0)) desde = d; });
+      marcha = conMov.every((d) => d.acumDif >= 0) ? " · Las ventas en blanco estuvieron por encima de las compras todo el período"
+        : ` · Las ventas en blanco pasaron a las compras el <b>${fmtDate(desde.fecha)}</b> y siguen arriba`;
+    }
+  }
+
+  return `
+  ${faltantes.length ? `<div class="dup-aviso warn mb16">Días del período sin ventas guardadas: ${faltantes.map(([n, k]) => `<b>${esc(n)}</b> ${k} ${k === 1 ? "día" : "días"}`).join(" · ")}. Si no estuvo cerrado esos días, faltan cargar y la comparación da ventas de menos.</div>` : ""}
+  <div class="kpi-row">
+    <div class="kpi"><div class="kpi-label">Compras facturadas</div><div class="kpi-value">${fmtMoney(foco.comprasBlanco)}</div><div class="total-sub">${esc(focoNombre)}</div></div>
+    <div class="kpi"><div class="kpi-label">Ventas en blanco</div><div class="kpi-value">${fmtMoney(foco.ventasBlanco)}</div><div class="total-sub">Cobertura ${cob(foco)}</div></div>
+    <div class="kpi ${foco.dif >= 0 ? "kpi-pos" : "kpi-neg"}"><div class="kpi-label">${foco.dif >= 0 ? "Vendiste en blanco de más" : "Te falta vender en blanco"}</div><div class="kpi-value">${fmtMoney(Math.abs(foco.dif))}</div><div class="total-sub">ventas − compras</div></div>
+  </div>
+  <div class="ventas-iva">Posición de IVA: débito (ventas) <b>${fmtMoney(foco.ivaDebito)}</b> − crédito (compras) <b>${fmtMoney(foco.ivaCredito)}</b> = <b>${fmtMoney(Math.abs(foco.saldoIva))}</b> ${foco.saldoIva >= 0 ? "a pagar" : "a favor"}
+    · En negro: ventas <b>${fmtMoney(foco.ventasNegro)}</b>, compras <b>${fmtMoney(foco.comprasNegro)}</b>
+    ${marcha}</div>
+
+  ${sucs.length > 1 ? `
+  ${arriba.length && abajo.length ? `<div class="dup-aviso warn mb16"><b>Desequilibrio entre sucursales:</b> ${arriba.map((s) => `${esc(s.nombre)} vende en blanco ${fmtMoney(cmp.grupos[s.id].dif)} más de lo que compra`).join("; ")}, mientras que ${abajo.map((s) => `${esc(s.nombre)} vende ${fmtMoney(-cmp.grupos[s.id].dif)} menos`).join("; ")}. En general la diferencia es ${fmtMoney(G.dif)}.</div>` : ""}
+  <div class="hoy-wrap mb16"><table class="data-table comp-tabla">
+    <thead><tr><th>Sucursal</th><th>Compras fact.</th><th>Ventas blanco</th><th>Diferencia</th><th>Cobertura</th><th>IVA débito</th><th>IVA crédito</th><th>Saldo IVA</th></tr></thead>
+    <tbody>${sucs.map((s) => { const g = cmp.grupos[s.id]; return `<tr${h.suc === s.id ? ` class="fila-foco"` : ""}>
+      <td>${sucursalTag(s.id)}</td><td>${fmtMoney(g.comprasBlanco)}</td><td class="fact">${fmtMoney(g.ventasBlanco)}</td><td>${dif(g.dif)}</td><td>${cob(g)}</td>
+      <td>${fmtMoney(g.ivaDebito)}</td><td>${fmtMoney(g.ivaCredito)}</td><td>${fmtMoney(g.saldoIva)}</td></tr>`; }).join("")}
+    <tr class="ventas-tot"><td>General</td><td>${fmtMoney(G.comprasBlanco)}</td><td class="fact">${fmtMoney(G.ventasBlanco)}</td><td>${dif(G.dif)}</td><td>${cob(G)}</td>
+      <td>${fmtMoney(G.ivaDebito)}</td><td>${fmtMoney(G.ivaCredito)}</td><td>${fmtMoney(G.saldoIva)}</td></tr>
+    </tbody>
+  </table></div>` : ""}
+
+  ${chartAcumulado(dias)}
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+    <button class="btn small" id="btnCmpPdf">📄 PDF ventas vs compras</button>
+    <button class="btn secondary small" id="btnCmpXls">📊 Excel</button>
+  </div>
+  <details class="chart-table"><summary>Ver día por día</summary>
+  <div class="hoy-wrap" style="margin-top:8px;"><table class="data-table">
+    <thead><tr><th>Día</th><th>Compras fact.</th><th>Ventas blanco</th><th>Diferencia del día</th><th>Acumulado</th></tr></thead>
+    <tbody>${dias.filter((d) => d.comprasBlanco || d.ventasBlanco || !d.hayVentas).map((d) => `<tr${d.hayVentas ? "" : ` class="sin-ventas" title="Sin ventas guardadas ese día"`}>
+      <td>${fmtDate(d.fecha)}${d.hayVentas ? "" : " ⚠️"}</td><td>${fmtMoney(d.comprasBlanco)}</td><td class="fact">${fmtMoney(d.ventasBlanco)}</td>
+      <td>${dif(d.ventasBlanco - d.comprasBlanco)}</td><td>${dif(d.acumDif)}</td></tr>`).join("")}</tbody>
+  </table></div></details>`;
+}
+
+/** Datos para el PDF / Excel del comparativo. */
+function datosComparativo() {
+  const h = ventasHist;
+  const ids = state.sucursales.map((s) => s.id);
+  const cmp = compararVentasCompras(h.todas || [], h.compras || [], h.desde, h.hasta, ids);
+  const sucs = state.sucursales.filter((s) => { const g = cmp.grupos[s.id]; return g && (g.ventasBlanco || g.comprasBlanco || g.ventasNegro || g.comprasNegro); })
+    .map((s) => ({ nombre: s.nombre, ...cmp.grupos[s.id] }));
+  const dias = h.suc === "todas" ? cmp.dias
+    : compararVentasCompras((h.todas || []).filter((r) => r.sucursal_id === h.suc), (h.compras || []).filter((c) => c.sucursal_id === h.suc), h.desde, h.hasta, [h.suc]).dias;
+  return { desde: h.desde, hasta: h.hasta, foco: h.suc === "todas" ? "General" : sucursalNombre(h.suc), general: cmp.grupos.general,
+    focoGrupo: h.suc !== "todas" ? cmp.grupos[h.suc] : cmp.grupos.general, sucs, dias };
+}
+
+/** Carga manual de un día (blanco / negro) + lista de lo cargado a mano en el período del historial. */
+function cargaManualHtml() {
+  const m = ventasManual;
+  const suc = esGerente() ? state.perfil.sucursal_id : m.sucursal;
+  const h = ventasHist;
+  // lo manual del período del historial, agrupado por sucursal + día
+  const manual = {};
+  for (const r of (h.todas || []).filter((x) => x.origen === "manual")) {
+    const g = (manual[r.sucursal_id + "|" + r.fecha] ||= { sucursal_id: r.sucursal_id, fecha: r.fecha, blanco: 0, negro: 0, iva: 0 });
+    g[r.lado] += Number(r.total) || 0;
+    if (r.lado === "blanco") g.iva += Number(r.iva21) || 0;
+  }
+  const lista = Object.values(manual).sort((a, b) => b.fecha.localeCompare(a.fecha));
+  return `<div class="panel mb16" style="padding:16px;">
+    <div class="manual-grid">
+      <div class="field"><label>Sucursal</label>${esGerente()
+        ? `<input type="text" value="${esc(sucursalNombre(suc))}" disabled>`
+        : `<select id="vmSuc"><option value="">Elegí la sucursal</option>${state.sucursales.map((s) => `<option value="${s.id}" ${m.sucursal === s.id ? "selected" : ""}>${esc(s.nombre)}</option>`).join("")}</select>`}</div>
+      <div class="field"><label>Fecha</label><input type="date" id="vmFecha" value="${esc(m.fecha)}" max="${todayISO()}"></div>
+      <div class="field"><label>Ventas en blanco</label><input type="text" inputmode="decimal" autocomplete="off" class="monto" id="vmBlanco" value="${esc(m.blanco)}" placeholder="0"></div>
+      <div class="field"><label>Ventas en negro</label><input type="text" inputmode="decimal" autocomplete="off" class="monto" id="vmNegro" value="${esc(m.negro)}" placeholder="0"></div>
+      <div class="field"><label>IVA de lo blanco (opcional)</label><input type="text" inputmode="decimal" autocomplete="off" class="monto" id="vmIva" value="${esc(m.iva)}" placeholder="0"></div>
+    </div>
+    <button class="btn small" id="btnVmGuardar" ${m.guardando ? "disabled" : ""}>${m.guardando ? "Guardando…" : "💾 Guardar ventas del día"}</button>
+    <div class="hint" style="margin:10px 0 0;">Si ese día ya estaba cargado a mano, se reemplaza. Los días que vinieron del PDF del sistema no se pueden pisar a mano.</div>
+  </div>
+  ${lista.length ? `<div class="hoy-wrap mb16"><table class="data-table">
+    <thead><tr><th>Día (cargado a mano)</th>${esGerente() ? "" : "<th>Sucursal</th>"}<th>Blanco</th><th>Negro</th><th>IVA</th><th></th></tr></thead>
+    <tbody>${lista.map((g) => `<tr>
+      <td>${fmtDate(g.fecha)} <span class="nc-tag manual-tag">manual</span></td>${esGerente() ? "" : `<td>${sucursalTag(g.sucursal_id)}</td>`}
+      <td class="fact">${fmtMoney(g.blanco)}</td><td class="nofact">${fmtMoney(g.negro)}</td><td>${fmtMoney(g.iva)}</td>
+      <td><div class="hoy-acc"><button class="btn secondary small ico" data-vmedit="${g.sucursal_id}|${g.fecha}" title="Corregir" aria-label="Corregir">✎</button><button class="btn secondary small ico" data-vmdel="${g.sucursal_id}|${g.fecha}" title="Eliminar" aria-label="Eliminar">🗑</button></div></td>
+    </tr>`).join("")}</tbody>
+  </table></div>` : ""}`;
+}
+
+async function guardarVentaManual() {
+  const m = ventasManual;
+  for (const [k, id] of [["fecha", "vmFecha"], ["blanco", "vmBlanco"], ["negro", "vmNegro"], ["iva", "vmIva"]]) m[k] = document.getElementById(id)?.value ?? m[k];
+  if (!esGerente()) m.sucursal = document.getElementById("vmSuc")?.value || "";
+  const suc = esGerente() ? state.perfil.sucursal_id : m.sucursal;
+  if (!suc) { toast("Elegí la sucursal."); return; }
+  if (!m.fecha) { toast("Ingresá la fecha."); return; }
+  if (m.fecha > todayISO()) { toast("La fecha no puede ser posterior a hoy."); return; }
+  const [b, n, iva] = [m.blanco, m.negro, m.iva].map(parseMonto);
+  if ([b, n, iva].some((x) => isNaN(x))) { toast("Revisá los importes."); return; }
+  if (!b && !n) { toast("Ingresá las ventas en blanco y/o en negro."); return; }
+  m.guardando = true; render();
+  const { error } = await sb.rpc("guardar_venta_manual", { p_sucursal: suc, p_fecha: m.fecha, p_blanco: b, p_negro: n, p_iva: iva });
+  m.guardando = false;
+  if (error) { toast(errorMsg(error)); render(); return; }
+  toast(`Ventas del ${fmtDate(m.fecha)} guardadas.`);
+  m.blanco = m.negro = m.iva = "";
+  // que el historial incluya el día cargado
+  const h = ventasHist;
+  if (m.fecha < h.desde || m.fecha > h.hasta) ventasHist = { ...h, desde: m.fecha < h.desde ? m.fecha : h.desde, hasta: m.fecha > h.hasta ? m.fecha : h.hasta };
+  ventasHist.rows = null;
+  cargarHistVentas();
+}
+
+async function eliminarVentaManual(clave) {
+  const [suc, fecha] = clave.split("|");
+  if (!(await dialogo(`¿Eliminar las ventas cargadas a mano del ${fmtDate(fecha)}${esGerente() ? "" : " en " + sucursalNombre(suc)}?`, { aceptar: "Eliminar", peligro: true }))) return;
+  const { error } = await sb.from("ventas_diarias").delete().eq("sucursal_id", suc).eq("fecha", fecha).eq("origen", "manual");
+  if (error) { toast(errorMsg(error)); return; }
+  toast("Carga manual eliminada.");
+  ventasHist.rows = null;
+  cargarHistVentas();
+}
+
+function corregirVentaManual(clave) {
+  const [suc, fecha] = clave.split("|");
+  const rows = (ventasHist.todas || []).filter((r) => r.origen === "manual" && r.sucursal_id === suc && r.fecha === fecha);
+  const b = rows.find((r) => r.lado === "blanco"), n = rows.find((r) => r.lado === "negro");
+  ventasManual = { ...ventasManual, sucursal: suc, fecha, blanco: montoTexto(b?.total) || "", negro: montoTexto(n?.total) || "", iva: montoTexto(b?.iva21) || "" };
+  render();
+  document.getElementById("vmBlanco")?.focus();
+}
+
+function datosVentas() {
+  return {
+    libro: ventasLibro, asignacion: ventasPV, archivo: ventasArchivo,
+    sucursal: ventasSucursal ? sucursalNombre(ventasSucursal) : "",
+    resumen: resumenVentas(ventasLibro, ventasPV),
+  };
+}
+
 function pageProveedores() {
   return `
   <div class="pagehead"><h1 class="serif">Proveedores</h1><p>Agregá los proveedores una vez y quedan disponibles para todas las sucursales.</p></div>
@@ -1393,6 +1844,58 @@ function wirePage() {
     input?.addEventListener("change", (e) => { const f = e.target.files[0]; if (f) importarBackup(f); });
   }
 
+  if (route === "ventas") {
+    const inp = document.getElementById("ventasFile");
+    on("btnVentasFile", "click", () => inp.click());
+    inp?.addEventListener("change", async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      ventasCargando = true; ventasError = ""; render();
+      try { ventasLibro = await leerLibroVentas(f); ventasArchivo = f.name; ventasPV = {}; await detectarSucursalVentas(); }   // cada PDF pregunta de nuevo blanco / negro
+      catch (err) { ventasError = err.message || "No se pudo leer el PDF."; console.error(err); }
+      ventasCargando = false; render();
+    });
+    on("ventasSuc", "change", (e) => { ventasSucursal = e.target.value; render(); });
+    on("btnVentasGuardar", "click", guardarVentas);
+    document.querySelectorAll("input.monto").forEach(wireMonto);
+    on("btnVmGuardar", "click", guardarVentaManual);
+    // que lo tipeado no se pierda si otra parte de la pantalla se vuelve a dibujar
+    for (const [k, id] of [["fecha", "vmFecha"], ["blanco", "vmBlanco"], ["negro", "vmNegro"], ["iva", "vmIva"], ["sucursal", "vmSuc"]])
+      on(id, "input", (e) => { ventasManual[k] = e.target.value; });
+    on("vmSuc", "change", (e) => { ventasManual.sucursal = e.target.value; });
+    document.querySelectorAll("[data-vmdel]").forEach((b) => b.addEventListener("click", () => eliminarVentaManual(b.dataset.vmdel)));
+    document.querySelectorAll("[data-vmedit]").forEach((b) => b.addEventListener("click", () => corregirVentaManual(b.dataset.vmedit)));
+    const histFechas = () => {
+      const d = document.getElementById("vhDesde").value, h = document.getElementById("vhHasta").value;
+      if (!d || !h) return;
+      ventasHist = { ...ventasHist, desde: d <= h ? d : h, hasta: d <= h ? h : d, rows: null }; cargarHistVentas();
+    };
+    on("vhDesde", "change", histFechas);
+    on("vhHasta", "change", histFechas);
+    document.querySelectorAll("[data-vrango]").forEach((b) => b.addEventListener("click", () => {
+      const k = b.dataset.vrango, hoy = new Date();
+      const [d, h] = k === "mes" ? monthRange() : k === "año" ? yearRange()
+        : [new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1), new Date(hoy.getFullYear(), hoy.getMonth(), 0)].map((x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`);
+      ventasHist = { ...ventasHist, desde: d, hasta: h, rows: null }; cargarHistVentas();
+    }));
+    document.querySelectorAll("[data-vsuc]").forEach((b) => b.addEventListener("click", () => { ventasHist = { ...ventasHist, suc: b.dataset.vsuc, rows: null }; cargarHistVentas(); }));
+    on("btnVhPdf", "click", () => generarInformeVentasPDF(datosHistVentas()));
+    on("btnCmpPdf", "click", () => generarComparativoPDF(datosComparativo()));
+    on("btnCmpXls", "click", async () => {
+      try { await generarComparativoExcel(datosComparativo()); } catch (e) { toast("No se pudo generar el Excel."); console.error(e); }
+    });
+    on("btnVhXls", "click", async () => {
+      try { await generarInformeVentasExcel(datosHistVentas()); } catch (e) { toast("No se pudo generar el Excel."); console.error(e); }
+    });
+    document.querySelectorAll("[data-pv]").forEach((b) => b.addEventListener("click", () => {
+      ventasPV = { ...ventasPV, [b.dataset.pv]: b.dataset.lado };
+      render();
+    }));
+    on("btnVentasPdf", "click", () => generarInformeVentasPDF(datosVentas()));
+    on("btnVentasXls", "click", async () => {
+      try { await generarInformeVentasExcel(datosVentas()); } catch (e) { toast("No se pudo generar el Excel."); console.error(e); }
+    });
+  }
+
   if (route === "arca") {
     const inp = document.getElementById("arcaFile");
     on("btnArcaFile", "click", () => inp.click());
@@ -1454,3 +1957,4 @@ if (configOk) {
   state.booting = false;
 }
 render();
+
