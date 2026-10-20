@@ -1241,24 +1241,28 @@ function pageVentas() {
   return `
   <div class="pagehead"><h1 class="serif">Ventas</h1><p>${esAdmin()
     ? "Subí el Libro de IVA Ventas del sistema de la farmacia o cargá las ventas del día a mano."
-    : "Cargá las ventas del día de " + esc(sucursalNombre(state.perfil.sucursal_id)) + " y compará con lo comprado."}</p></div>
+    : "Subí el Libro de IVA Ventas de " + esc(sucursalNombre(state.perfil.sucursal_id)) + " o cargá las ventas del día a mano, y compará con lo comprado."}</p></div>
 
-  ${esAdmin() ? `<div class="trip trip2">
+  <div class="trip trip2">
   <section class="trip-col">
   <div class="trip-h">1 · Libro de IVA Ventas (PDF)</div>
   <div class="panel mb16" style="padding:16px;">
     <ol class="arca-pasos">
       <li>En el sistema de la farmacia sacá el <b>Libro de IVA Ventas</b> del período en <b>PDF</b>.</li>
-      <li>Subilo acá. Se lee en tu navegador: el archivo no se guarda.</li>
-      <li>Elegí <b>Blanco</b> o <b>Negro</b> para cada punto de venta.</li>
+      <li>Arrastralo al recuadro de abajo (o tocalo para elegirlo). Se lee en tu navegador: el archivo no se guarda.</li>
+      <li>Elegí <b>Blanco</b> o <b>Negro</b> para cada punto de venta y tocá <b>Guardar</b>.</li>
     </ol>
     <input type="file" id="ventasFile" accept=".pdf,application/pdf" style="display:none;">
-    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-      <button class="btn small" id="btnVentasFile" ${ventasCargando ? "disabled" : ""}>${ventasCargando ? "Leyendo…" : "📤 Subir PDF de ventas"}</button>
-      <select id="ventasSuc" class="ventas-suc" title="Sucursal del libro">
+    <button type="button" class="dropzone${ventasCargando ? " cargando" : ""}" id="ventasDrop" ${ventasCargando ? "disabled" : ""}>
+      <span class="dropzone-ico">📄</span>
+      <span class="dropzone-txt">${ventasCargando ? "Leyendo el PDF…" : "<b>Arrastrá el PDF acá</b><br>o tocá para elegirlo"}</span>
+    </button>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px;">
+      ${esGerente() ? `<span class="hint" style="margin:0;">Sucursal: <b>${esc(sucursalNombre(state.perfil.sucursal_id))}</b></span>`
+        : `<select id="ventasSuc" class="ventas-suc" title="Sucursal del libro">
         <option value="">Sucursal: sin indicar</option>
         ${state.sucursales.map((s) => `<option value="${s.id}" ${ventasSucursal === s.id ? "selected" : ""}>${esc(s.nombre)}</option>`).join("")}
-      </select>
+      </select>`}
     </div>
     ${L ? `<div class="hint" style="margin-top:10px;">Archivo: <b>${esc(ventasArchivo)}</b> · ${esc(L.empresa)} · ${L.filas.length} comprobantes · del ${fmtDate(L.desde)} al ${fmtDate(L.hasta)}</div>
     ${L.cuadra === true ? `<div class="ventas-ok">✓ La suma de los comprobantes coincide con el total del PDF (${fmtMoney(L.totalPdf)}).</div>`
@@ -1292,20 +1296,20 @@ function pageVentas() {
   ${resultadoVentas(r, { pdf: "btnVentasPdf", xls: "btnVentasXls", extra: `<button class="btn small" id="btnVentasGuardar" ${ventasGuardando ? "disabled" : ""}>${ventasGuardando ? "Guardando…" : "💾 Guardar en Facturero"}</button>` })}
   <div class="hint" style="margin-top:8px;">Al guardar se registran los totales por día y punto de venta (no el PDF)${ventasSucursal ? ` en <b>${esc(sucursalNombre(ventasSucursal))}</b>` : ". Elegí la sucursal arriba"}. Si ese período ya estaba guardado, se reemplaza.</div>`}
   </section>
-  </div>` : ""}
+  </div>
 
   <section class="comp-full">
-  <div class="trip-h">${esAdmin() ? 4 : 1} · Carga manual</div>
+  <div class="trip-h">4 · Carga manual</div>
   ${cargaManualHtml()}
   </section>
 
   <section class="comp-full">
-  <div class="trip-h">${esAdmin() ? 5 : 2} · Historial guardado</div>
+  <div class="trip-h">5 · Historial guardado</div>
   ${historialVentasHtml()}
   </section>
 
   <section class="comp-full">
-  <div class="trip-h">${esAdmin() ? 6 : 3} · Ventas en blanco vs compras facturadas</div>
+  <div class="trip-h">6 · Ventas en blanco vs compras facturadas</div>
   ${comparativoHtml()}
   </section>
   `;
@@ -1412,6 +1416,14 @@ async function detectarSucursalVentas() {
 
 async function guardarVentas() {
   const L = ventasLibro;
+  if (esGerente()) {
+    // el gerente guarda solo en su sucursal, y no un PDF que por el punto de venta es de otra
+    const propia = state.perfil.sucursal_id;
+    if (ventasDetectada?.id && ventasDetectada.id !== propia) {
+      toast(`Este PDF es de ${sucursalNombre(ventasDetectada.id)} (punto de venta ${ventasDetectada.pv}). Solo podés guardar el de ${sucursalNombre(propia)}.`); return;
+    }
+    ventasSucursal = propia;
+  }
   if (!ventasSucursal) { toast("Elegí de qué sucursal es el libro antes de guardar."); document.getElementById("ventasSuc")?.focus(); return; }
   if (ventasDetectada?.id && ventasDetectada.id !== ventasSucursal
     && !(await dialogo(`Por el punto de venta ${ventasDetectada.pv} este libro parece de ${sucursalNombre(ventasDetectada.id)}, pero elegiste ${sucursalNombre(ventasSucursal)}. ¿Guardarlo igual en ${sucursalNombre(ventasSucursal)}?`, { aceptar: "Guardar igual" }))) return;
@@ -1507,7 +1519,7 @@ function comparativoHtml() {
   ${faltantes.length ? `<div class="dup-aviso warn mb16">Días del período sin ventas guardadas: ${faltantes.map(([n, k]) => `<b>${esc(n)}</b> ${k} ${k === 1 ? "día" : "días"}`).join(" · ")}. Si no estuvo cerrado esos días, faltan cargar y la comparación da ventas de menos.</div>` : ""}
   <div class="kpi-row">
     <div class="kpi"><div class="kpi-label">Compras facturadas</div><div class="kpi-value">${fmtMoney(foco.comprasBlanco)}</div><div class="total-sub">${esc(focoNombre)}</div></div>
-    <div class="kpi"><div class="kpi-label">Ventas en blanco</div><div class="kpi-value">${fmtMoney(foco.ventasBlanco)}</div><div class="total-sub">Cobertura ${cob(foco)}</div></div>
+    <div class="kpi"><div class="kpi-label">Ventas en blanco</div><div class="kpi-value">${fmtMoney(foco.ventasBlanco)}</div><div class="total-sub" title="Cuántas veces vendiste en blanco lo que compraste en blanco. 1× = vendiste lo mismo que compraste; más de 1× = vendiste más.">${foco.ventasBlanco ? `Cobertura ${cob(foco)}` : "Todavía sin ventas guardadas"}</div></div>
     <div class="kpi ${foco.dif >= 0 ? "kpi-pos" : "kpi-neg"}"><div class="kpi-label">${foco.dif >= 0 ? "Vendiste en blanco de más" : "Te falta vender en blanco"}</div><div class="kpi-value">${fmtMoney(Math.abs(foco.dif))}</div><div class="total-sub">ventas − compras</div></div>
   </div>
   <div class="ventas-iva">Posición de IVA: débito (ventas) <b>${fmtMoney(foco.ivaDebito)}</b> − crédito (compras) <b>${fmtMoney(foco.ivaCredito)}</b> = <b>${fmtMoney(Math.abs(foco.saldoIva))}</b> ${foco.saldoIva >= 0 ? "a pagar" : "a favor"}
@@ -1846,14 +1858,20 @@ function wirePage() {
 
   if (route === "ventas") {
     const inp = document.getElementById("ventasFile");
-    on("btnVentasFile", "click", () => inp.click());
-    inp?.addEventListener("change", async (e) => {
-      const f = e.target.files[0]; if (!f) return;
+    const cargarPdf = async (f) => {
+      if (!f) return;
+      if (!/\.pdf$/i.test(f.name) && f.type !== "application/pdf") { toast("Tiene que ser el PDF del Libro de IVA Ventas."); return; }
       ventasCargando = true; ventasError = ""; render();
       try { ventasLibro = await leerLibroVentas(f); ventasArchivo = f.name; ventasPV = {}; await detectarSucursalVentas(); }   // cada PDF pregunta de nuevo blanco / negro
       catch (err) { ventasError = err.message || "No se pudo leer el PDF."; console.error(err); }
       ventasCargando = false; render();
-    });
+    };
+    const zona = document.getElementById("ventasDrop");
+    zona?.addEventListener("click", () => inp.click());
+    zona?.addEventListener("dragover", (e) => { e.preventDefault(); zona.classList.add("encima"); });
+    zona?.addEventListener("dragleave", () => zona.classList.remove("encima"));
+    zona?.addEventListener("drop", (e) => { e.preventDefault(); zona.classList.remove("encima"); cargarPdf(e.dataTransfer.files[0]); });
+    inp?.addEventListener("change", (e) => cargarPdf(e.target.files[0]));
     on("ventasSuc", "change", (e) => { ventasSucursal = e.target.value; render(); });
     on("btnVentasGuardar", "click", guardarVentas);
     document.querySelectorAll("input.monto").forEach(wireMonto);

@@ -367,3 +367,9 @@ header.top{padding:2px 0 8px;}
 /* Ventas: carga manual */
 .manual-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); column-gap:12px;}
 .manual-tag{background:var(--paper); color:var(--muted); border:1px solid var(--line);}
+/* Ventas: zona para arrastrar el PDF */
+.dropzone{display:flex; align-items:center; justify-content:center; gap:12px; width:100%; padding:22px 16px; border:2px dashed var(--muted); border-radius:8px; background:var(--paper); color:var(--ink); font:inherit; font-size:14px; text-align:left; cursor:pointer; transition:background-color .15s, border-color .15s;}
+.dropzone:hover, .dropzone.encima{border-color:var(--accent); background:color-mix(in srgb, var(--accent) 10%, var(--panel));}
+.dropzone.cargando{cursor:progress; opacity:.7;}
+.dropzone-ico{font-size:26px;}
+.dropzone-txt{line-height:1.5;}
