@@ -8,6 +8,7 @@ import {
 import { generarReportePDF, generarReporteExcel, generarInformeArca, generarInformeVentasPDF, generarInformeVentasExcel, generarComparativoPDF, generarComparativoExcel, generarResultadosPDF, generarResultadosExcel } from "./pdf.js";
 import { leerArchivoArca, compararArca, rangoArca } from "./arca.js";
 import { leerLibroVentas, puntosDeVenta, resumenVentas, filasParaGuardar, resumenGuardado, compararVentasCompras } from "./ventas.js";
+import { descargarTodo } from "./exportar.js";
 import { estadoResultados, mesesEntre, mesMas, mesLabel, finDeMes } from "./resultados.js";
 
 /* ---------- STATE ---------- */
@@ -1063,7 +1064,11 @@ function pageListado() {
   </section>
 
   ${esAdmin() ? `<details class="herramientas"${dupGrupos !== null || dupBuscando ? " open" : ""}>
-  <summary>Herramientas del administrador · duplicados, otros tributos e importar</summary>
+  <summary>Herramientas del administrador · copia completa, duplicados, otros tributos e importar</summary>
+  <div class="section-label">Copia completa</div>
+  <div class="filters"><button data-copiatodo>⬇ Descargar todo (Excel)</button></div>
+  <div class="hint">Un Excel con todo: estado de resultados, comprobantes, ventas, gastos operativos, proveedores y listas. Sirve para trabajar en Excel, para el contador y como respaldo. Conviene bajarlo una vez por mes.</div>
+
   ${seccionDuplicados()}
 
   ${seccionTributos()}
@@ -1791,6 +1796,7 @@ function calcularResultados(foco = er.suc) {
 
 function pageResultados() {
   return `
+  ${esAdmin() ? `<div class="copia-top"><button class="btn secondary small" data-copiatodo>⬇ Descargar todo (Excel)</button></div>` : ""}
   <div class="pagehead"><h1 class="serif">Estado de resultados</h1><p>Ventas menos el costo de ventas (facturas en blanco y en negro) menos los gastos operativos, mes por mes${esGerente() ? " de " + esc(sucursalNombre(state.perfil.sucursal_id)) : " y por sucursal"}.</p></div>
 
   <section class="comp-full">
@@ -2101,6 +2107,21 @@ function wireResultados() {
   });
 }
 
+let copiando = false;
+/** Copia completa en Excel (todos los datos + estado de resultados). */
+async function copiaCompleta() {
+  if (copiando) return;
+  copiando = true;
+  const botones = [...document.querySelectorAll("[data-copiatodo]")];
+  botones.forEach((b) => { b.disabled = true; b.dataset.txt = b.textContent; b.textContent = "Preparando la copia…"; });
+  try {
+    const n = await descargarTodo();
+    toast(`Copia descargada: ${n.comprobantes} comprobantes, ${n.ventas} registros de ventas, ${n.gastos} gastos y ${n.proveedores} proveedores.`);
+  } catch (e) { console.error(e); toast("No se pudo armar la copia: " + errorMsg(e)); }
+  copiando = false;
+  botones.forEach((b) => { b.disabled = false; b.textContent = b.dataset.txt; });
+}
+
 function pageProveedores() {
   return `
   <div class="pagehead"><h1 class="serif">Proveedores</h1><p>Agregá los proveedores una vez y quedan disponibles para todas las sucursales.</p></div>
@@ -2200,6 +2221,7 @@ function wireMonto(el) {
 }
 
 function wirePage() {
+  document.querySelectorAll("[data-copiatodo]").forEach((b) => b.addEventListener("click", copiaCompleta));
   if (route === "subir") {
     document.querySelectorAll("#grupoToggle button").forEach((btn) =>
       btn.addEventListener("click", () => { syncDraft(); draft.grupo = btn.dataset.grupo; render(); }));
