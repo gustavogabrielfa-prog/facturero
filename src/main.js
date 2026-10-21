@@ -5,9 +5,10 @@ import {
   IMPUESTOS, computeTotals, groupBy, groupByPeriod, periodLabel,
   periodKey, periodKeysBetween, periodShort, fmtCompact, parseMonto, formatMontoTexto, montoTexto, numeroNorm, signo,
 } from "./format.js";
-import { generarReportePDF, generarReporteExcel, generarInformeArca, generarInformeVentasPDF, generarInformeVentasExcel, generarComparativoPDF, generarComparativoExcel } from "./pdf.js";
+import { generarReportePDF, generarReporteExcel, generarInformeArca, generarInformeVentasPDF, generarInformeVentasExcel, generarComparativoPDF, generarComparativoExcel, generarResultadosPDF, generarResultadosExcel } from "./pdf.js";
 import { leerArchivoArca, compararArca, rangoArca } from "./arca.js";
 import { leerLibroVentas, puntosDeVenta, resumenVentas, filasParaGuardar, resumenGuardado, compararVentasCompras } from "./ventas.js";
+import { CATEGORIAS_FIJOS, estadoResultados, mesesEntre, mesMas, mesLabel, finDeMes } from "./resultados.js";
 
 /* ---------- STATE ---------- */
 const state = {
@@ -59,6 +60,10 @@ let ventasGuardando = false;
 let ventasDetectada = null;
 let ventasManual = { sucursal: "", fecha: todayISO(), blanco: "", negro: "", iva: "", guardando: false };
 let ventasHist = { desde: monthRange()[0], hasta: monthRange()[1], suc: "todas", rows: null, cargando: false, error: "" };
+// Estado de resultados (admin): período en meses, sucursal y costos fijos del mes elegido
+const mesActual = () => todayISO().slice(0, 7);
+let er = { desde: mesActual(), hasta: mesActual(), suc: "todas", sinIva: true, datos: null, cargando: false, error: "" };
+let cf = { mes: mesActual(), rows: null, previos: [], cargando: false, error: "", id: null, sucursal: "", categoria: CATEGORIAS_FIJOS[0], concepto: "", monto: "", guardando: false };
 let provNuevoPendiente = null;   // { nombre, cuit } para precargar "+ Nuevo" al cargar desde ARCA
 let chartGran = null;   // null = automático según el rango de fechas
 let chartData = null;   // columnas del gráfico, para el tooltip
@@ -303,10 +308,12 @@ function render() {
   if (route === "listado" && !veListado()) route = "subir";
   if (route === "arca" && !esAdmin()) route = "subir";
   if (route === "ventas" && !veListado()) route = "subir";
+  if (route === "resultados" && !esAdmin()) route = "subir";
   let body;
   if (route === "listado") body = pageListado();
   else if (route === "arca") body = pageArca();
   else if (route === "ventas") body = pageVentas();
+  else if (route === "resultados") body = pageResultados();
   else if (route === "proveedores") body = pageProveedores();
   else { route = "subir"; body = pageSubir(); }
 
@@ -320,6 +327,10 @@ function render() {
   if (route === "listado" && !listLoaded && !listLoading) loadComprobantes();
   if (route === "subir") { if (hoyLoaded) renderHoy(); else loadHoy(); }
   if (route === "ventas" && ventasHist.rows === null && !ventasHist.cargando && !ventasHist.error) cargarHistVentas();
+  if (route === "resultados") {
+    if (er.datos === null && !er.cargando && !er.error) cargarResultados();
+    if (cf.rows === null && !cf.cargando && !cf.error) cargarCostosMes();
+  }
 }
 
 function shell(bodyHtml, logged, tabs = false) {
@@ -329,7 +340,7 @@ function shell(bodyHtml, logged, tabs = false) {
       : sucursalNombre(state.perfil.sucursal_id)
     : "";
   return `
-  <div class="wrap${logged && (route === "listado" || route === "subir" || route === "proveedores" || route === "arca" || route === "ventas") ? " ancho ruta-" + route : ""}">
+  <div class="wrap${logged && (route === "listado" || route === "subir" || route === "proveedores" || route === "arca" || route === "ventas" || route === "resultados") ? " ancho ruta-" + route : ""}">
     <div class="pivote">
     <header class="top">
       <div class="brand"><div class="brand-mark">F</div><div class="brand-name">Facturero</div></div>
@@ -344,6 +355,7 @@ function shell(bodyHtml, logged, tabs = false) {
       ${veListado() ? `<button data-route="listado" class="${route === "listado" ? "active" : ""}">🗂 Listado</button>` : ""}
       ${esAdmin() ? `<button data-route="arca" class="${route === "arca" ? "active" : ""}">🧾 Compara ARCA</button>` : ""}
       ${veListado() ? `<button data-route="ventas" class="${route === "ventas" ? "active" : ""}">💵 Ventas</button>` : ""}
+      ${esAdmin() ? `<button data-route="resultados" class="${route === "resultados" ? "active" : ""}">📈 Resultados</button>` : ""}
     </div>` : ""}
     </div>
     ${bodyHtml}
@@ -1731,6 +1743,233 @@ function datosVentas() {
   };
 }
 
+/* ---------- ESTADO DE RESULTADOS (admin): ventas − compras − costos fijos ---------- */
+const nombreCostoSuc = (id) => (id ? sucursalNombre(id) : "General");
+const tagCostoSuc = (id) => (id ? sucursalTag(id) : `<span class="nc-tag manual-tag">General</span>`);
+
+/** Trae ventas, compras y costos fijos de los meses elegidos (siempre todas las sucursales: los generales se reparten). */
+async function cargarResultados() {
+  er.cargando = true; er.error = ""; if (route === "resultados") render();
+  const desde = er.desde + "-01", hasta = finDeMes(er.hasta);
+  try {
+    const [ventas, compras, costos] = await Promise.all([
+      fetchAll(() => sb.from("ventas_diarias").select("fecha, sucursal_id, lado, total, iva105, iva21, iva_otros, percep").gte("fecha", desde).lte("fecha", hasta).order("fecha")),
+      fetchAll(() => sb.from("comprobantes").select("fecha, sucursal_id, grupo, tipo, monto, iva21, iva105, iva27, iva5, iva25").gte("fecha", desde).lte("fecha", hasta).order("fecha")),
+      fetchAll(() => sb.from("costos_fijos").select("mes, sucursal_id, categoria, monto").gte("mes", desde).lte("mes", hasta).order("mes")),
+    ]);
+    er.datos = { ventas, compras, costos };
+  } catch (e) { er.datos = null; er.error = errorMsg(e); }
+  er.cargando = false; if (route === "resultados") render();
+}
+
+/** Costos fijos del mes elegido y del anterior (para copiarlos). */
+async function cargarCostosMes() {
+  cf.cargando = true; cf.error = ""; if (route === "resultados") render();
+  const ant = mesMas(cf.mes, -1);
+  const { data, error } = await sb.from("costos_fijos").select("*").in("mes", [cf.mes + "-01", ant + "-01"]).order("created_at");
+  cf.cargando = false;
+  if (error) { cf.rows = null; cf.error = errorMsg(error); }
+  else { cf.rows = data.filter((c) => c.mes.startsWith(cf.mes)); cf.previos = data.filter((c) => c.mes.startsWith(ant)); }
+  if (route === "resultados") render();
+}
+
+function calcularResultados() {
+  const d = er.datos;
+  return estadoResultados({ ...d, meses: mesesEntre(er.desde, er.hasta), foco: er.suc, sucursalIds: state.sucursales.map((s) => s.id), sinIva: er.sinIva });
+}
+
+function pageResultados() {
+  return `
+  <div class="pagehead"><h1 class="serif">Estado de resultados</h1><p>Ventas (ingresos) menos compras (costos variables: facturas en blanco y en negro) menos costos fijos, mes por mes.</p></div>
+
+  <section class="comp-full">
+  <div class="trip-h">1 · Período y sucursal</div>
+  <div class="panel mb16" style="padding:16px;">
+    <div class="filters">${[["mes", "Este mes"], ["mesAnt", "Mes anterior"], ["tres", "Últimos 3 meses"], ["año", "Este año"], ["añoAnt", "Año anterior"]].map(([k, l]) => `<button data-errango="${k}">${l}</button>`).join("")}</div>
+    <div class="row2">
+      <div class="field" style="margin-bottom:12px;"><label>Desde (mes)</label><input type="month" id="erDesde" value="${er.desde}"></div>
+      <div class="field" style="margin-bottom:12px;"><label>Hasta (mes)</label><input type="month" id="erHasta" value="${er.hasta}"></div>
+    </div>
+    <div class="filters" style="margin-bottom:10px;">
+      <button data-ersuc="todas" class="${er.suc === "todas" ? "active" : ""}">Todas las sucursales</button>
+      ${state.sucursales.map((s) => `<button data-ersuc="${s.id}" class="${er.suc === s.id ? "active" : ""}">${esc(s.nombre)}</button>`).join("")}
+    </div>
+    <label class="er-check"><input type="checkbox" id="erSinIva" ${er.sinIva ? "checked" : ""}> Restar el IVA de lo blanco (el IVA no es ingreso ni costo: se le debe o se le cobra a ARCA)</label>
+  </div>
+  </section>
+
+  <section class="comp-full">
+  <div class="trip-h">2 · Resultado${er.suc === "todas" ? " · todas las sucursales" : " · " + esc(sucursalNombre(er.suc))}</div>
+  ${resultadosHtml()}
+  </section>
+
+  <section class="comp-full">
+  <div class="trip-h">3 · Costos fijos del mes</div>
+  ${costosFijosHtml()}
+  </section>`;
+}
+
+function resultadosHtml() {
+  if (er.cargando) return `<div class="loading">Calculando el estado de resultados…</div>`;
+  if (er.error) return `<div class="dup-aviso err">${esc(er.error)}${/costos_fijos/.test(er.error) ? "<br>Falta ejecutar en Supabase la migración <b>014_costos_fijos.sql</b>." : ""}</div>`;
+  if (!er.datos) return "";
+  const R = calcularResultados(), T = R.total, cols = R.cols;
+  const varios = cols.length > 1;
+  const todas = er.suc === "todas";
+  const ivaTxt = R.sinIva ? " (sin IVA)" : "";
+  const sinVentas = cols.filter((c) => !c.hayVentas && c.mes <= mesActual()).map((c) => mesLabel(c.mes));
+  const sinFijos = cols.filter((c) => !c.fijos && c.mes <= mesActual()).map((c) => mesLabel(c.mes));
+  const money = (v) => fmtMoney(v);
+  const signed = (v) => `<span class="${v >= 0 ? "dif-pos" : "dif-neg"}">${fmtMoney(v)}</span>`;
+  const pctOr = (v) => (v == null ? "—" : pct(v));
+  const fila = (label, get, cls = "", fmt = money) => `<tr class="${cls}"><td>${label}</td>${cols.map((c) => `<td>${fmt(get(c))}</td>`).join("")}${varios ? `<td class="tot">${fmt(get(T))}</td>` : ""}</tr>`;
+  const sec = (label) => `<tr class="er-sec"><td colspan="${cols.length + (varios ? 2 : 1)}">${label}</td></tr>`;
+  const hayGenerales = !todas && T.generalesMes > 0;
+  const meses = cols.length;
+
+  return `
+  ${sinVentas.length ? `<div class="dup-aviso warn mb16">Sin ventas guardadas en: <b>${sinVentas.map(esc).join(", ")}</b>. Cargalas en la pestaña Ventas, si no el resultado da de menos.</div>` : ""}
+  ${sinFijos.length ? `<div class="dup-aviso warn mb16">Sin costos fijos cargados en: <b>${sinFijos.map(esc).join(", ")}</b>${todas ? "" : " para esta sucursal"}. Cargalos abajo (podés copiar los del mes anterior).</div>` : ""}
+  <div class="kpi-row">
+    <div class="kpi"><div class="kpi-label">Ingresos${ivaTxt}</div><div class="kpi-value">${money(T.ingresos)}</div><div class="total-sub">Blanco ${money(T.vb)} · Negro ${money(T.ventasNegro)}</div></div>
+    <div class="kpi"><div class="kpi-label">Margen bruto</div><div class="kpi-value">${money(T.margen)}</div><div class="total-sub">${T.margenPct == null ? "—" : pct(T.margenPct) + " de las ventas"}</div></div>
+    <div class="kpi ${T.resultado >= 0 ? "kpi-pos" : "kpi-neg"}"><div class="kpi-label">${T.resultado >= 0 ? "Ganancia" : "Pérdida"}</div><div class="kpi-value">${money(Math.abs(T.resultado))}</div><div class="total-sub">${T.resultadoPct == null ? "—" : pct(T.resultadoPct) + " de las ventas"}</div></div>
+  </div>
+  <div class="ventas-iva">Costos fijos <b>${money(T.fijos)}</b>${meses > 1 ? ` (promedio <b>${money(T.fijos / meses)}</b> por mes)` : ""}
+    ${T.equilibrio != null ? ` · Punto de equilibrio: con este margen hay que vender <b>${money(T.equilibrio)}</b>${meses > 1 ? ` en el período (<b>${money(T.equilibrio / meses)}</b> por mes)` : " en el mes"} para cubrir los costos fijos` : ""}
+    · Posición de IVA: <b>${money(Math.abs(T.saldoIva))}</b> ${T.saldoIva >= 0 ? "a pagar" : "a favor"}</div>
+
+  <div class="hoy-wrap mb16"><table class="data-table er-tabla">
+    <thead><tr><th>Concepto</th>${cols.map((c) => `<th>${esc(varios ? mesLabel(c.mes, true) : mesLabel(c.mes))}</th>`).join("")}${varios ? "<th>Total</th>" : ""}</tr></thead>
+    <tbody>
+      ${sec("Ingresos (ventas)")}
+      ${fila(`Ventas en blanco${ivaTxt}`, (c) => c.vb, "er-det")}
+      ${fila("Ventas en negro", (c) => c.ventasNegro, "er-det")}
+      ${fila("Total ingresos", (c) => c.ingresos, "er-sub")}
+      ${sec("Costos variables (compras de mercadería)")}
+      ${fila(`Compras facturadas${ivaTxt}`, (c) => c.cb, "er-det")}
+      ${fila("Compras no facturadas", (c) => c.comprasNegro, "er-det")}
+      ${fila("Total costos variables", (c) => c.variables, "er-sub")}
+      ${fila("Margen bruto", (c) => c.margen, "er-margen", signed)}
+      ${fila("% sobre ventas", (c) => c.margenPct, "er-pct", pctOr)}
+      ${sec("Costos fijos")}
+      ${R.categorias.map((cat) => fila(esc(cat), (c) => c.fijosCat[cat] || 0, "er-det")).join("")}
+      ${hayGenerales ? fila(`Parte de costos generales <small>(según ventas${T.parte != null ? ", " + pct(T.parte * 100) : ""})</small>`, (c) => c.fijosGenerales, "er-det") : ""}
+      ${!R.categorias.length && !hayGenerales ? `<tr class="er-det"><td colspan="${cols.length + (varios ? 2 : 1)}" style="color:var(--muted);">Sin costos fijos cargados</td></tr>` : ""}
+      ${fila("Total costos fijos", (c) => c.fijos, "er-sub")}
+      ${fila(`Resultado${varios ? "" : " del mes"}`, (c) => c.resultado, "er-final", signed)}
+      ${fila("% sobre ventas", (c) => c.resultadoPct, "er-pct", pctOr)}
+    </tbody>
+  </table></div>
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+    <button class="btn small" id="btnErPdf">📄 Estado de resultados PDF</button>
+    <button class="btn secondary small" id="btnErXls">📊 Excel</button>
+  </div>
+  <div class="hint">Las compras del mes se toman como costo de la mercadería vendida: si ese mes se compró mucho para stock (o se vendió stock viejo), el resultado del mes se mueve aunque el negocio no haya cambiado. Mirá varios meses juntos para ver la tendencia.${todas ? "" : " Los costos generales (los que no son de una sucursal) se reparten según lo que vendió cada sucursal ese mes."}</div>`;
+}
+
+function datosResultados() {
+  return { R: calcularResultados(), desde: er.desde, hasta: er.hasta, foco: er.suc === "todas" ? "Todas las sucursales" : sucursalNombre(er.suc), mesLabel };
+}
+
+function costosFijosHtml() {
+  const editando = !!cf.id;
+  const rows = cf.rows || [];
+  const orden = (c) => (c.sucursal_id ? "1" + sucursalNombre(c.sucursal_id) : "0") + "|" + c.categoria;
+  const lista = [...rows].sort((a, b) => orden(a).localeCompare(orden(b)));
+  const total = rows.reduce((a, c) => a + (Number(c.monto) || 0), 0);
+  const porSuc = [null, ...state.sucursales.map((s) => s.id)].map((id) => [id, rows.filter((c) => (c.sucursal_id || null) === id).reduce((a, c) => a + (Number(c.monto) || 0), 0)]).filter(([, v]) => v);
+  const cats = [...new Set([...CATEGORIAS_FIJOS, ...rows.map((c) => c.categoria), ...cf.previos.map((c) => c.categoria)])];
+  return `<div class="panel mb16" style="padding:16px;">
+    <div class="field" style="max-width:220px;"><label>Mes</label><input type="month" id="cfMes" value="${cf.mes}"></div>
+    <div class="manual-grid">
+      <div class="field"><label>Sucursal</label><select id="cfSuc">
+        <option value="" ${!cf.sucursal ? "selected" : ""}>General (de todas)</option>
+        ${state.sucursales.map((s) => `<option value="${s.id}" ${cf.sucursal === s.id ? "selected" : ""}>${esc(s.nombre)}</option>`).join("")}
+      </select></div>
+      <div class="field"><label>Categoría</label><select id="cfCat">${cats.map((c) => `<option ${cf.categoria === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
+      <div class="field"><label>Detalle (opcional)</label><input type="text" id="cfConcepto" value="${esc(cf.concepto)}" placeholder="Ej.: Edenor, contador…" autocomplete="off"></div>
+      <div class="field"><label>Monto</label><input type="text" inputmode="decimal" autocomplete="off" class="monto" id="cfMonto" value="${esc(cf.monto)}" placeholder="0"></div>
+    </div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <button class="btn small" id="btnCfGuardar" ${cf.guardando ? "disabled" : ""}>${cf.guardando ? "Guardando…" : editando ? "💾 Guardar cambios" : "＋ Agregar costo"}</button>
+      ${editando ? `<button class="btn secondary small" id="btnCfCancelar">Cancelar</button>` : ""}
+    </div>
+    <div class="hint" style="margin:10px 0 0;">"General" es un costo compartido (por ejemplo el contador de las dos farmacias): en el resultado de cada sucursal se reparte según lo que vendió cada una.</div>
+  </div>
+  ${cf.cargando ? `<div class="loading">Cargando costos fijos…</div>`
+    : cf.error ? `<div class="dup-aviso err">${esc(cf.error)}${/costos_fijos/.test(cf.error) ? "<br>Falta ejecutar en Supabase la migración <b>014_costos_fijos.sql</b>." : ""}</div>`
+    : !cf.rows ? ""
+    : !rows.length ? `<div class="empty-state panel">No hay costos fijos cargados en ${esc(mesLabel(cf.mes))}.
+        ${cf.previos.length ? `<div style="margin-top:12px;"><button class="btn small" id="btnCfCopiar">📋 Copiar los ${cf.previos.length} costos de ${esc(mesLabel(mesMas(cf.mes, -1)))}</button><div class="hint" style="margin:8px 0 0;">Después corregí los que cambiaron (sueldos, luz…).</div></div>` : ""}</div>`
+    : `<div class="hoy-wrap mb16"><table class="data-table">
+      <thead><tr><th>Sucursal</th><th>Categoría</th><th>Detalle</th><th>Monto</th><th></th></tr></thead>
+      <tbody>${lista.map((c) => `<tr${cf.id === c.id ? ` class="fila-foco"` : ""}>
+        <td>${tagCostoSuc(c.sucursal_id)}</td><td style="text-align:left;">${esc(c.categoria)}</td><td style="text-align:left; color:var(--muted);">${esc(c.concepto || "")}</td>
+        <td class="tot">${fmtMoney(c.monto)}</td>
+        <td><div class="hoy-acc"><button class="btn secondary small ico" data-cfedit="${c.id}" title="Corregir" aria-label="Corregir">✎</button><button class="btn secondary small ico" data-cfdel="${c.id}" title="Eliminar" aria-label="Eliminar">🗑</button></div></td>
+      </tr>`).join("")}
+      <tr class="ventas-tot"><td>Total ${esc(mesLabel(cf.mes))}</td><td></td><td></td><td class="tot">${fmtMoney(total)}</td><td></td></tr>
+      </tbody>
+    </table></div>
+    ${porSuc.length > 1 ? `<div class="ventas-iva">${porSuc.map(([id, v]) => `${esc(nombreCostoSuc(id))} <b>${fmtMoney(v)}</b>`).join(" · ")}</div>` : ""}`}`;
+}
+
+function leerFormCosto() {
+  cf.sucursal = document.getElementById("cfSuc")?.value ?? cf.sucursal;
+  cf.categoria = document.getElementById("cfCat")?.value ?? cf.categoria;
+  cf.concepto = document.getElementById("cfConcepto")?.value ?? cf.concepto;
+  cf.monto = document.getElementById("cfMonto")?.value ?? cf.monto;
+}
+
+/** Después de cambiar costos: recargar la lista y, si el mes está en el período, el estado de resultados. */
+function costosCambiaron() {
+  cf.rows = null; cargarCostosMes();
+  if (cf.mes >= er.desde && cf.mes <= er.hasta) { er.datos = null; cargarResultados(); }
+}
+
+async function guardarCosto() {
+  leerFormCosto();
+  const monto = parseMonto(cf.monto);
+  if (isNaN(monto) || monto <= 0) { toast("Ingresá el monto."); document.getElementById("cfMonto")?.focus(); return; }
+  if (!cf.categoria) { toast("Elegí la categoría."); return; }
+  const fila = { mes: cf.mes + "-01", sucursal_id: cf.sucursal || null, categoria: cf.categoria, concepto: cf.concepto.trim() || null, monto };
+  cf.guardando = true; render();
+  const { error } = cf.id ? await sb.from("costos_fijos").update(fila).eq("id", cf.id) : await sb.from("costos_fijos").insert(fila);
+  cf.guardando = false;
+  if (error) { toast(errorMsg(error)); render(); return; }
+  toast(cf.id ? "Costo corregido." : `Costo agregado en ${mesLabel(cf.mes)}.`);
+  cf.id = null; cf.concepto = ""; cf.monto = "";
+  costosCambiaron();
+}
+
+function corregirCosto(id) {
+  const c = (cf.rows || []).find((x) => x.id === id);
+  if (!c) return;
+  Object.assign(cf, { id, sucursal: c.sucursal_id || "", categoria: c.categoria, concepto: c.concepto || "", monto: montoTexto(c.monto) });
+  render();
+  document.getElementById("cfMonto")?.focus();
+}
+
+async function eliminarCosto(id) {
+  const c = (cf.rows || []).find((x) => x.id === id);
+  if (!c || !(await dialogo(`¿Eliminar ${c.categoria}${c.concepto ? " (" + c.concepto + ")" : ""} de ${nombreCostoSuc(c.sucursal_id)} en ${mesLabel(cf.mes)}?`, { aceptar: "Eliminar", peligro: true }))) return;
+  const { error } = await sb.from("costos_fijos").delete().eq("id", id);
+  if (error) { toast(errorMsg(error)); return; }
+  if (cf.id === id) { cf.id = null; cf.concepto = ""; cf.monto = ""; }
+  toast("Costo eliminado.");
+  costosCambiaron();
+}
+
+async function copiarCostosMesAnterior() {
+  const filas = cf.previos.map((c) => ({ mes: cf.mes + "-01", sucursal_id: c.sucursal_id, categoria: c.categoria, concepto: c.concepto, monto: c.monto }));
+  if (!filas.length) return;
+  const { error } = await sb.from("costos_fijos").insert(filas);
+  if (error) { toast(errorMsg(error)); return; }
+  toast(`${filas.length} costos copiados a ${mesLabel(cf.mes)}.`);
+  costosCambiaron();
+}
+
 function pageProveedores() {
   return `
   <div class="pagehead"><h1 class="serif">Proveedores</h1><p>Agregá los proveedores una vez y quedan disponibles para todas las sucursales.</p></div>
@@ -1994,6 +2233,39 @@ function wirePage() {
     });
   }
 
+  if (route === "resultados") {
+    const recargar = () => { er.datos = null; cargarResultados(); };
+    const periodo = () => {
+      const d = document.getElementById("erDesde").value, h = document.getElementById("erHasta").value;
+      if (!d || !h) return;
+      [er.desde, er.hasta] = d <= h ? [d, h] : [h, d]; recargar();
+    };
+    on("erDesde", "change", periodo);
+    on("erHasta", "change", periodo);
+    document.querySelectorAll("[data-errango]").forEach((b) => b.addEventListener("click", () => {
+      const m = mesActual(), y = m.slice(0, 4);
+      [er.desde, er.hasta] = { mes: [m, m], mesAnt: [mesMas(m, -1), mesMas(m, -1)], tres: [mesMas(m, -2), m],
+        año: [y + "-01", m], añoAnt: [(y - 1) + "-01", (y - 1) + "-12"] }[b.dataset.errango];
+      recargar();
+    }));
+    // cambiar sucursal o IVA no necesita volver a traer datos
+    document.querySelectorAll("[data-ersuc]").forEach((b) => b.addEventListener("click", () => { er.suc = b.dataset.ersuc; render(); }));
+    on("erSinIva", "change", (e) => { er.sinIva = e.target.checked; render(); });
+    on("btnErPdf", "click", () => generarResultadosPDF(datosResultados()));
+    on("btnErXls", "click", async () => {
+      try { await generarResultadosExcel(datosResultados()); } catch (e) { toast("No se pudo generar el Excel."); console.error(e); }
+    });
+    document.querySelectorAll("input.monto").forEach(wireMonto);
+    // que lo tipeado no se pierda si otra parte de la pantalla se vuelve a dibujar
+    for (const id of ["cfSuc", "cfCat", "cfConcepto", "cfMonto"]) { on(id, "input", leerFormCosto); on(id, "change", leerFormCosto); }
+    on("cfMes", "change", (e) => { if (!e.target.value) return; leerFormCosto(); cf.mes = e.target.value; cf.id = null; cf.rows = null; cargarCostosMes(); });
+    on("btnCfGuardar", "click", guardarCosto);
+    on("btnCfCancelar", "click", () => { cf.id = null; cf.concepto = ""; cf.monto = ""; render(); });
+    on("btnCfCopiar", "click", copiarCostosMesAnterior);
+    document.querySelectorAll("[data-cfedit]").forEach((b) => b.addEventListener("click", () => corregirCosto(b.dataset.cfedit)));
+    document.querySelectorAll("[data-cfdel]").forEach((b) => b.addEventListener("click", () => eliminarCosto(b.dataset.cfdel)));
+  }
+
   if (route === "arca") {
     const inp = document.getElementById("arcaFile");
     on("btnArcaFile", "click", () => inp.click());
@@ -2033,6 +2305,7 @@ window.addEventListener("hashchange", () => {
   syncDraft();
   route = location.hash.replace("#", "") || "subir";
   if (route === "listado") listLoaded = false; // siempre datos frescos al entrar
+  if (route === "resultados") { er.datos = null; er.error = ""; cf.rows = null; cf.error = ""; }
   render();
 });
 
