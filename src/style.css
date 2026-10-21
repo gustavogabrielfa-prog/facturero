@@ -452,3 +452,23 @@ header.top{padding:2px 0 8px;}
 .gl-dif.sube{color:var(--danger);} .gl-dif.baja{color:var(--facturado);} .gl-dif.igual{color:var(--muted); font-weight:600;}
 .er-tabla th.er-mes{text-align:center; text-transform:none; font-size:12px; letter-spacing:0; color:var(--ink); min-width:96px;}
 .copia-top{display:flex; justify-content:flex-end; margin-bottom:-8px;}
+/* Secciones plegables: se tocan para ver el detalle */
+.pleg{background:var(--panel); border:1px solid var(--line); border-radius:6px; margin-bottom:10px;}
+.pleg > summary{display:flex; align-items:center; gap:10px; padding:11px 14px; cursor:pointer; list-style:none; font-weight:700; font-size:14px; user-select:none;}
+.pleg > summary::-webkit-details-marker{display:none;}
+.pleg > summary::before{content:"▸"; color:var(--muted); font-size:13px; transition:transform .15s; flex-shrink:0;}
+.pleg[open] > summary::before{transform:rotate(90deg);}
+.pleg > summary:hover{background:color-mix(in srgb, var(--accent) 6%, transparent);}
+.pleg-t{flex:1; min-width:0;}
+.pleg-r{color:var(--muted); font-size:13px; font-weight:600; white-space:nowrap;}
+.pleg-body{padding:2px 14px 12px;}
+.pleg-body > .hoy-wrap{padding:2px 0; border:0;}
+.pleg .chart-panel{margin-bottom:8px;}
+/* "ⓘ Cómo funciona": más discreto */
+.pleg.pleg-info{background:transparent; border:0; margin-bottom:4px;}
+.pleg.pleg-info > summary{padding:4px 0; font-size:12.5px; font-weight:600; color:var(--muted);}
+.pleg.pleg-info > summary::before{content:none;}
+.pleg.pleg-info .pleg-body{padding:2px 0 6px;}
+/* Listado: filtros de la lista de comprobantes */
+.lis-filtros{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:12px;}
+.lis-filtros select{padding:7px 10px; border:1px solid var(--line); border-radius:20px; background:var(--panel); color:var(--ink); font:inherit; font-size:13px; max-width:100%;}

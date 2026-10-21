@@ -403,6 +403,28 @@ function dialogo(mensaje, { aceptar = "Aceptar", peligro = false, valor } = {}) 
   });
 }
 
+/* ---------- SECCIONES PLEGABLES: arrancan cerradas y se acuerdan de cuáles dejaste abiertas (en esta computadora) ---------- */
+const CLAVE_ABIERTOS = "facturero_secciones_abiertas";
+let abiertos = (() => { try { return JSON.parse(localStorage.getItem(CLAVE_ABIERTOS)) || {}; } catch { return {}; } })();
+
+/** Bloque que se despliega al tocar el título. `resumen` se ve aun cerrado (ej.: el total). */
+function plegable(id, titulo, contenido, { resumen = "", abierto = false, clase = "" } = {}) {
+  if (!contenido || !String(contenido).trim()) return "";
+  return `<details class="pleg ${clase}" data-pleg="${id}"${abierto || abiertos[id] ? " open" : ""}>
+    <summary><span class="pleg-t">${titulo}</span>${resumen ? `<span class="pleg-r">${resumen}</span>` : ""}</summary>
+    <div class="pleg-body">${contenido}</div>
+  </details>`;
+}
+/** Explicación plegada ("ⓘ Cómo funciona"). */
+const info = (id, html, titulo = "ⓘ Cómo funciona") => plegable(id, titulo, `<div class="hint" style="margin:0;">${html}</div>`, { clase: "pleg-info" });
+
+function wirePlegables(root = document) {
+  root.querySelectorAll("details[data-pleg]").forEach((d) => d.addEventListener("toggle", () => {
+    if (d.open) abiertos[d.dataset.pleg] = true; else delete abiertos[d.dataset.pleg];
+    try { localStorage.setItem(CLAVE_ABIERTOS, JSON.stringify(abiertos)); } catch { /* sin almacenamiento: solo no se recuerda */ }
+  }));
+}
+
 /* ---------- PÁGINAS SIMPLES ---------- */
 function pageNoConfig() {
   return `<div class="lock-wrap">
@@ -987,70 +1009,61 @@ function pageListado() {
     <div class="kpi"><div class="kpi-label">Facturado (blanco)</div><div class="kpi-value">${fmtMoney(t.fact)}</div></div>
     <div class="kpi"><div class="kpi-label">No facturado (negro)</div><div class="kpi-value">${fmtMoney(t.noFact)}</div></div>
     <div class="kpi"><div class="kpi-label">Total real</div><div class="kpi-value">${fmtMoney(t.total)}</div></div>
-  </div>
+  </div>`}
+  </section>
 
-  <div class="section-label" style="border-top:none; padding-top:0;">Impuestos — para cotejar con tu contador o ARCA</div>
-  <div class="panel" style="padding:6px 18px; margin-bottom:12px;">
+  <section class="trip-col">
+  <div class="trip-h">2 · Más información</div>
+  ${listLoading ? cargando : `
+  ${plegable("lis-impuestos", "Impuestos del período", `
+    <div class="hint" style="margin-top:0;">Para cotejar con tu contador o ARCA.</div>
     <table class="data-table">
       ${IMPUESTOS.map(([k, label]) => `<tr><td>${label}</td><td>${fmtMoney(t[k])}</td></tr>`).join("")}
       <tr class="tot"><td><b>Total IVA</b></td><td><b>${fmtMoney(t.ivaTotal)}</b></td></tr>
       <tr><td>Ingresos Brutos (Misiones)</td><td>${fmtMoney(t.iibb)}</td></tr>
       ${[...new Set([...tributosActivos().map((x) => x.id), ...Object.keys(t.tributos)])]
         .map((id) => `<tr><td>${esc(tributoNombre(id))}</td><td>${fmtMoney(t.tributos[id] || 0)}</td></tr>`).join("")}
-    </table>
-  </div>
-  <div class="total-box mb26">
-    <span>Total impuestos</span>
-    <span>${fmtMoney(t.impuestosTotal)}</span>
-  </div>
+      <tr class="ventas-tot"><td>Total impuestos</td><td>${fmtMoney(t.impuestosTotal)}</td></tr>
+    </table>`, { resumen: fmtMoney(t.impuestosTotal) })}
 
-  ${esAdmin() && sucursalFilter === "todas" && bySuc.length > 1 ? `
-  <div class="section-label" style="border-top:none; padding-top:0;">Por sucursal</div>
-  <div class="panel mb26" style="padding:0 18px;">${tablaResumen(bySuc)}</div>` : ""}
+  ${esAdmin() && sucursalFilter === "todas" && bySuc.length > 1 ? plegable("lis-sucursal", "Por sucursal", tablaResumen(bySuc), { resumen: `${bySuc.length} sucursales` }) : ""}
 
-  <div class="section-label" style="border-top:none; padding-top:0;">Resumen por período</div>
-  <div class="filters">
-    ${[["dia", "Día"], ["semana", "Semana"], ["mes", "Mes"], ["año", "Año"]].map(([g, l]) => `<button data-gran="${g}" class="${periodGranularity === g ? "active" : ""}">${l}</button>`).join("")}
-  </div>
-  ${periods.length
-    ? `<div class="panel mb26" style="padding:0 18px;">${tablaResumen(periods, (k) => periodLabel(k, periodGranularity))}</div>`
-    : `<div class="empty-state panel mb26">No hay comprobantes en este período.</div>`}`}
-  </section>
+  ${plegable("lis-periodo", "Resumen por período", `
+    <div class="filters" style="margin-top:4px;">
+      ${[["dia", "Día"], ["semana", "Semana"], ["mes", "Mes"], ["año", "Año"]].map(([g, l]) => `<button data-gran="${g}" class="${periodGranularity === g ? "active" : ""}">${l}</button>`).join("")}
+    </div>
+    ${periods.length ? tablaResumen(periods, (k) => periodLabel(k, periodGranularity)) : `<div class="empty-state">No hay comprobantes en este período.</div>`}`)}
 
-  <section class="trip-col">
-  <div class="trip-h">2 · Análisis</div>
-  ${listLoading ? cargando : `
-  <div class="filters">
-    <button data-filter="todos" class="${listFilter === "todos" ? "active" : ""}">Todos</button>
-    <button data-filter="facturado" class="${listFilter === "facturado" ? "active" : ""}">Facturado</button>
-    <button data-filter="nofacturado" class="${listFilter === "nofacturado" ? "active" : ""}">No facturado</button>
-  </div>
-  <div class="field" style="margin-bottom:12px;">
-    <label>Proveedor</label>
-    <select id="fProv">
-      <option value="todos">Todos los proveedores</option>
-      ${provOpts.map((p) => `<option value="${p.id}" ${provFilter === p.id ? "selected" : ""}>${esc(p.nombre)} (${p.n})</option>`).join("")}
-    </select>
-  </div>
-  ${hist.length ? `
-  <div class="total-box" style="margin-bottom:${listFilter === "todos" ? "10px" : "16px"};">
-    <span>Total${provFilter !== "todos" ? " · " + esc(proveedorNombre(provFilter)) : ""}<small class="total-sub">${hist.length} comprobante${hist.length === 1 ? "" : "s"}${ht.impuestosTotal > 0 ? " · Impuestos " + fmtMoney(ht.impuestosTotal) : ""}</small></span>
-    <span>${fmtMoney(ht.total)}</span>
-  </div>
-  ${listFilter === "todos" ? `
-  <div class="total-split mb16">
-    <span><i class="sw fact"></i>Facturado <b>${fmtMoney(ht.fact)}</b></span>
-    <span><i class="sw nofact"></i>No facturado <b>${fmtMoney(ht.noFact)}</b></span>
-  </div>
-  ${chartCompras(hist)}` : ""}
-  ${esAdmin() && sucursalFilter === "todas" && provFilter === "todos" && new Set(hist.map((c) => c.sucursal_id)).size > 1
-    ? chartAporte(hist, { titulo: "Aporte por sucursal", campo: "sucursal_id", nombre: sucursalNombre, attr: "data-sfil", colorSuc: true }) : ""}
-  ${provFilter === "todos" ? chartAporte(hist, { titulo: "Aporte por proveedor", campo: "proveedor_id", nombre: proveedorNombre, attr: "data-pfil" }) : ""}` : `<div class="empty-state panel">No hay comprobantes para este filtro.</div>`}`}
+  ${plegable("lis-analisis", "Gráficos y proveedores", hist.length ? `
+    ${listFilter === "todos" ? `<div class="total-split mb16" style="margin-top:4px;">
+      <span><i class="sw fact"></i>Facturado <b>${fmtMoney(ht.fact)}</b></span>
+      <span><i class="sw nofact"></i>No facturado <b>${fmtMoney(ht.noFact)}</b></span>
+    </div>
+    ${chartCompras(hist)}` : ""}
+    ${esAdmin() && sucursalFilter === "todas" && provFilter === "todos" && new Set(hist.map((c) => c.sucursal_id)).size > 1
+      ? chartAporte(hist, { titulo: "Aporte por sucursal", campo: "sucursal_id", nombre: sucursalNombre, attr: "data-sfil", colorSuc: true }) : ""}
+    ${provFilter === "todos" ? chartAporte(hist, { titulo: "Aporte por proveedor", campo: "proveedor_id", nombre: proveedorNombre, attr: "data-pfil" }) : ""}`
+    : `<div class="empty-state">No hay comprobantes para este filtro.</div>`)}`}
   </section>
   </div>
 
   <section class="comp-full">
   <div class="trip-h">3 · Comprobantes</div>
+  ${listLoading ? "" : `<div class="lis-filtros">
+    <div class="filters" style="margin:0;">
+      <button data-filter="todos" class="${listFilter === "todos" ? "active" : ""}">Todos</button>
+      <button data-filter="facturado" class="${listFilter === "facturado" ? "active" : ""}">Facturado</button>
+      <button data-filter="nofacturado" class="${listFilter === "nofacturado" ? "active" : ""}">No facturado</button>
+    </div>
+    <select id="fProv" aria-label="Proveedor">
+      <option value="todos">Todos los proveedores</option>
+      ${provOpts.map((p) => `<option value="${p.id}" ${provFilter === p.id ? "selected" : ""}>${esc(p.nombre)} (${p.n})</option>`).join("")}
+    </select>
+  </div>
+  ${hist.length && (listFilter !== "todos" || provFilter !== "todos") ? `<div class="total-box" style="margin-bottom:12px;">
+    <span>Total${provFilter !== "todos" ? " · " + esc(proveedorNombre(provFilter)) : ""}<small class="total-sub">${hist.length} comprobante${hist.length === 1 ? "" : "s"}${ht.impuestosTotal > 0 ? " · Impuestos " + fmtMoney(ht.impuestosTotal) : ""}</small></span>
+    <span>${fmtMoney(ht.total)}</span>
+  </div>` : ""}`}
   <div class="field busq" style="margin-bottom:12px;">
     <label>Buscar por N° de comprobante, proveedor, importe o nota de crédito</label>
     <input type="search" id="fBusq" inputmode="search" autocomplete="off" placeholder="Ej: 031700020301 · Del Sud · 120.500,00 · nota de crédito" value="${esc(busqueda)}">
@@ -1063,11 +1076,11 @@ function pageListado() {
   </div>
   </section>
 
-  ${esAdmin() ? `<details class="herramientas"${dupGrupos !== null || dupBuscando ? " open" : ""}>
-  <summary>Herramientas del administrador · copia completa, duplicados, otros tributos e importar</summary>
+  ${esAdmin() ? plegable("lis-herramientas", "🛠 Herramientas del administrador", `
+  <div class="hint" style="margin-top:0;">Copia completa, duplicados, otros tributos e importar.</div>
   <div class="section-label">Copia completa</div>
   <div class="filters"><button data-copiatodo>⬇ Descargar todo (Excel)</button></div>
-  <div class="hint">Un Excel con todo: estado de resultados, comprobantes, ventas, gastos operativos, proveedores y listas. Sirve para trabajar en Excel, para el contador y como respaldo. Conviene bajarlo una vez por mes.</div>
+  ${info("lis-copia-info", "Un Excel con todo: estado de resultados, comprobantes, ventas, gastos operativos, proveedores y listas. Sirve para trabajar en Excel, para el contador y como respaldo. Conviene bajarlo una vez por mes.", "ⓘ Qué trae la copia")}
 
   ${seccionDuplicados()}
 
@@ -1078,8 +1091,8 @@ function pageListado() {
     <button id="btnImport">📤 Importar copia de seguridad (.json)</button>
     <input type="file" id="importFile" accept="application/json" style="display:none;">
   </div>
-  <div class="hint">Subí las copias descargadas desde el Facturero anterior (una por sucursal). Los comprobantes repetidos se ignoran.</div>
-  </details>` : ""}
+  <div class="hint">Subí las copias descargadas desde el Facturero anterior (una por sucursal). Los comprobantes repetidos se ignoran.</div>`,
+  { abierto: dupGrupos !== null || dupBuscando }) : ""}
   `;
 }
 
@@ -1343,11 +1356,11 @@ function pageVentas() {
   <section class="trip-col">
   <div class="trip-h">1 · Libro de IVA Ventas (PDF)</div>
   <div class="panel mb16" style="padding:16px;">
-    <ol class="arca-pasos">
+    ${info("ven-pdf-info", `<ol class="arca-pasos" style="margin:0;">
       <li>En el sistema de la farmacia sacá el <b>Libro de IVA Ventas</b> del período en <b>PDF</b>.</li>
       <li>Arrastralo al recuadro de abajo (o tocalo para elegirlo). Se lee en tu navegador: el archivo no se guarda.</li>
       <li>Elegí <b>Blanco</b> o <b>Negro</b> para cada punto de venta y tocá <b>Guardar</b>.</li>
-    </ol>
+    </ol>`, "ⓘ Cómo se sube el PDF")}
     <input type="file" id="ventasFile" accept=".pdf,application/pdf" style="display:none;">
     <button type="button" class="dropzone${ventasCargando ? " cargando" : ""}" id="ventasDrop" ${ventasCargando ? "disabled" : ""}>
       <span class="dropzone-ico">📄</span>
@@ -1390,7 +1403,7 @@ function pageVentas() {
   ${!L ? `<div class="empty-state panel">Subí el PDF de ventas para ver blanco y negro.</div>`
     : !r ? `<div class="empty-state panel">Falta elegir Blanco o Negro en los puntos de venta.</div>` : `
   ${resultadoVentas(r, { pdf: "btnVentasPdf", xls: "btnVentasXls", extra: `<button class="btn small" id="btnVentasGuardar" ${ventasGuardando ? "disabled" : ""}>${ventasGuardando ? "Guardando…" : "💾 Guardar en Facturero"}</button>` })}
-  <div class="hint" style="margin-top:8px;">Al guardar se registran los totales por día y punto de venta (no el PDF)${ventasSucursal ? ` en <b>${esc(sucursalNombre(ventasSucursal))}</b>` : ". Elegí la sucursal arriba"}. Si ese período ya estaba guardado, se reemplaza.</div>`}
+  <div class="hint" style="margin-top:0;">Al guardar se registran los totales por día y punto de venta (no el PDF)${ventasSucursal ? ` en <b>${esc(sucursalNombre(ventasSucursal))}</b>` : ". Elegí la sucursal arriba"}. Si ese período ya estaba guardado, se reemplaza.</div>`}
   </section>
   </div>
 
@@ -1412,7 +1425,7 @@ function pageVentas() {
 }
 
 /** Tarjetas, barra blanco / negro, IVA, gráfico, botones y tabla por día (sirve para el PDF leído y para el historial). */
-function resultadoVentas(r, { pdf, xls, extra = "" }) {
+function resultadoVentas(r, { pdf, xls, extra = "", id = "ven" }) {
   const kpi = (label, v, sub = "") => `<div class="kpi"><div class="kpi-label">${label}</div><div class="kpi-value">${v}</div>${sub ? `<div class="total-sub">${sub}</div>` : ""}</div>`;
   return `
   <div class="kpi-row ventas-kpis">
@@ -1423,13 +1436,14 @@ function resultadoVentas(r, { pdf, xls, extra = "" }) {
   <div class="ventas-barra" title="Blanco ${pct(100 - r.t.pctNegro)} · Negro ${pct(r.t.pctNegro)}">
     <i class="seg fact" style="width:${100 - r.t.pctNegro}%"></i><i class="seg nofact" style="width:${r.t.pctNegro}%"></i>
   </div>
-  <div class="ventas-iva">IVA débito (blanco): <b>${fmtMoney(r.t.ivaBlanco)}</b> · Neto gravado <b>${fmtMoney(r.t.netoBlanco)}</b> · Exento <b>${fmtMoney(r.t.exentoBlanco)}</b>${r.t.ncBlanco || r.t.ncNegro ? ` · Notas de crédito: blanco <b>${fmtMoney(r.t.ncBlanco)}</b>, negro <b>${fmtMoney(r.t.ncNegro)}</b> (ya restadas)` : ""}</div>
-  ${chartVentas(r.dias)}
-  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
     ${extra}
     <button class="btn ${extra ? "secondary " : ""}small" id="${pdf}">📄 Informe PDF</button>
     <button class="btn secondary small" id="${xls}">📊 Excel</button>
   </div>
+  ${plegable(id + "-detalle", "IVA, gráfico y día por día", `
+  <div class="ventas-iva">IVA débito (blanco): <b>${fmtMoney(r.t.ivaBlanco)}</b> · Neto gravado <b>${fmtMoney(r.t.netoBlanco)}</b> · Exento <b>${fmtMoney(r.t.exentoBlanco)}</b>${r.t.ncBlanco || r.t.ncNegro ? ` · Notas de crédito: blanco <b>${fmtMoney(r.t.ncBlanco)}</b>, negro <b>${fmtMoney(r.t.ncNegro)}</b> (ya restadas)` : ""}</div>
+  ${chartVentas(r.dias)}
   <div class="hoy-wrap"><table class="data-table">
     <thead><tr><th>Día</th><th>Blanco</th><th>Negro</th><th>Total</th><th>% negro</th></tr></thead>
     <tbody>${r.dias.filter((d) => d.blanco || d.negro).map((d) => `<tr>
@@ -1438,7 +1452,7 @@ function resultadoVentas(r, { pdf, xls, extra = "" }) {
     </tr>`).join("")}
     <tr class="ventas-tot"><td>Total</td><td class="fact">${fmtMoney(r.t.blanco)}</td><td class="nofact">${fmtMoney(r.t.negro)}</td><td class="tot">${fmtMoney(r.t.total)}</td><td>${pct(r.t.pctNegro)}</td></tr>
     </tbody>
-  </table></div>`;
+  </table></div>`, { resumen: "IVA " + fmtMoney(r.t.ivaBlanco) })}`;
 }
 
 /** Historial: lo guardado en ventas_diarias, con filtro de fechas y sucursal. */
@@ -1464,11 +1478,11 @@ function historialVentasHtml() {
     : h.error ? `<div class="dup-aviso err">${esc(h.error)}</div>`
     : !h.rows ? ""
     : !h.rows.length ? `<div class="empty-state panel">No hay ventas guardadas en ese período${h.suc !== "todas" ? " para " + esc(sucursalNombre(h.suc)) : ""}.</div>`
-    : `${porSuc.length > 1 ? `<div class="hoy-wrap mb16"><table class="data-table">
+    : `${porSuc.length > 1 ? plegable("ven-hist-suc", "Por sucursal", `<div class="hoy-wrap"><table class="data-table">
         <thead><tr><th>Sucursal</th><th>Blanco</th><th>Negro</th><th>Total</th><th>% negro</th></tr></thead>
         <tbody>${porSuc.map((x) => `<tr><td>${sucursalTag(x.s.id)}</td><td class="fact">${fmtMoney(x.blanco)}</td><td class="nofact">${fmtMoney(x.negro)}</td><td class="tot">${fmtMoney(x.total)}</td><td>${pct(x.pctNegro)}</td></tr>`).join("")}</tbody>
-      </table></div>` : ""}
-      ${resultadoVentas(r, { pdf: "btnVhPdf", xls: "btnVhXls" })}`}`;
+      </table></div>`, { resumen: `${porSuc.length} sucursales` }) : ""}
+      ${resultadoVentas(r, { pdf: "btnVhPdf", xls: "btnVhXls", id: "ven-hist" })}`}`;
 }
 
 /** Trae lo guardado en ventas_diarias para el período y sucursal del historial. */
@@ -1618,13 +1632,17 @@ function comparativoHtml() {
     <div class="kpi"><div class="kpi-label">Ventas en blanco</div><div class="kpi-value">${fmtMoney(foco.ventasBlanco)}</div><div class="total-sub" title="Cuántas veces vendiste en blanco lo que compraste en blanco. 1× = vendiste lo mismo que compraste; más de 1× = vendiste más.">${foco.ventasBlanco ? `Cobertura ${cob(foco)}` : "Todavía sin ventas guardadas"}</div></div>
     <div class="kpi ${foco.dif >= 0 ? "kpi-pos" : "kpi-neg"}"><div class="kpi-label">${foco.dif >= 0 ? "Vendiste en blanco de más" : "Te falta vender en blanco"}</div><div class="kpi-value">${fmtMoney(Math.abs(foco.dif))}</div><div class="total-sub">ventas − compras</div></div>
   </div>
-  <div class="ventas-iva">Posición de IVA: débito (ventas) <b>${fmtMoney(foco.ivaDebito)}</b> − crédito (compras) <b>${fmtMoney(foco.ivaCredito)}</b> = <b>${fmtMoney(Math.abs(foco.saldoIva))}</b> ${foco.saldoIva >= 0 ? "a pagar" : "a favor"}
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+    <button class="btn small" id="btnCmpPdf">📄 PDF ventas vs compras</button>
+    <button class="btn secondary small" id="btnCmpXls">📊 Excel</button>
+  </div>
+  ${plegable("cmp-iva", "IVA y compras en negro", `<div class="ventas-iva" style="margin-bottom:0;">Posición de IVA: débito (ventas) <b>${fmtMoney(foco.ivaDebito)}</b> − crédito (compras) <b>${fmtMoney(foco.ivaCredito)}</b> = <b>${fmtMoney(Math.abs(foco.saldoIva))}</b> ${foco.saldoIva >= 0 ? "a pagar" : "a favor"}
     · En negro: ventas <b>${fmtMoney(foco.ventasNegro)}</b>, compras <b>${fmtMoney(foco.comprasNegro)}</b>
-    ${marcha}</div>
+    ${marcha}</div>`, { resumen: `IVA ${fmtMoney(Math.abs(foco.saldoIva))} ${foco.saldoIva >= 0 ? "a pagar" : "a favor"}` })}
 
   ${sucs.length > 1 ? `
   ${arriba.length && abajo.length ? `<div class="dup-aviso warn mb16"><b>Desequilibrio entre sucursales:</b> ${arriba.map((s) => `${esc(s.nombre)} vende en blanco ${fmtMoney(cmp.grupos[s.id].dif)} más de lo que compra`).join("; ")}, mientras que ${abajo.map((s) => `${esc(s.nombre)} vende ${fmtMoney(-cmp.grupos[s.id].dif)} menos`).join("; ")}. En general la diferencia es ${fmtMoney(G.dif)}.</div>` : ""}
-  <div class="hoy-wrap mb16"><table class="data-table comp-tabla">
+  ${plegable("cmp-suc", "Por sucursal", `<div class="hoy-wrap"><table class="data-table comp-tabla">
     <thead><tr><th>Sucursal</th><th>Compras fact.</th><th>Ventas blanco</th><th>Diferencia</th><th>Cobertura</th><th>IVA débito</th><th>IVA crédito</th><th>Saldo IVA</th></tr></thead>
     <tbody>${sucs.map((s) => { const g = cmp.grupos[s.id]; return `<tr${h.suc === s.id ? ` class="fila-foco"` : ""}>
       <td>${sucursalTag(s.id)}</td><td>${fmtMoney(g.comprasBlanco)}</td><td class="fact">${fmtMoney(g.ventasBlanco)}</td><td>${dif(g.dif)}</td><td>${cob(g)}</td>
@@ -1632,20 +1650,15 @@ function comparativoHtml() {
     <tr class="ventas-tot"><td>General</td><td>${fmtMoney(G.comprasBlanco)}</td><td class="fact">${fmtMoney(G.ventasBlanco)}</td><td>${dif(G.dif)}</td><td>${cob(G)}</td>
       <td>${fmtMoney(G.ivaDebito)}</td><td>${fmtMoney(G.ivaCredito)}</td><td>${fmtMoney(G.saldoIva)}</td></tr>
     </tbody>
-  </table></div>` : ""}
+  </table></div>`, { resumen: `${sucs.length} sucursales` })}` : ""}
 
-  ${chartAcumulado(dias)}
-  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
-    <button class="btn small" id="btnCmpPdf">📄 PDF ventas vs compras</button>
-    <button class="btn secondary small" id="btnCmpXls">📊 Excel</button>
-  </div>
-  <details class="chart-table"><summary>Ver día por día</summary>
-  <div class="hoy-wrap" style="margin-top:8px;"><table class="data-table">
+  ${plegable("cmp-acum", "Gráfico acumulado del período", chartAcumulado(dias))}
+  ${plegable("cmp-dias", "Día por día", `<div class="hoy-wrap"><table class="data-table">
     <thead><tr><th>Día</th><th>Compras fact.</th><th>Ventas blanco</th><th>Diferencia del día</th><th>Acumulado</th></tr></thead>
     <tbody>${dias.filter((d) => d.comprasBlanco || d.ventasBlanco || !d.hayVentas).map((d) => `<tr${d.hayVentas ? "" : ` class="sin-ventas" title="Sin ventas guardadas ese día"`}>
       <td>${fmtDate(d.fecha)}${d.hayVentas ? "" : " ⚠️"}</td><td>${fmtMoney(d.comprasBlanco)}</td><td class="fact">${fmtMoney(d.ventasBlanco)}</td>
       <td>${dif(d.ventasBlanco - d.comprasBlanco)}</td><td>${dif(d.acumDif)}</td></tr>`).join("")}</tbody>
-  </table></div></details>`;
+  </table></div>`)}`;
 }
 
 /** Datos para el PDF / Excel del comparativo. */
@@ -1685,16 +1698,16 @@ function cargaManualHtml() {
       <div class="field"><label>IVA de lo blanco (opcional)</label><input type="text" inputmode="decimal" autocomplete="off" class="monto" id="vmIva" value="${esc(m.iva)}" placeholder="0"></div>
     </div>
     <button class="btn small" id="btnVmGuardar" ${m.guardando ? "disabled" : ""}>${m.guardando ? "Guardando…" : "💾 Guardar ventas del día"}</button>
-    <div class="hint" style="margin:10px 0 0;">Si ese día ya estaba cargado a mano, se reemplaza. Los días que vinieron del PDF del sistema no se pueden pisar a mano.</div>
+    <div style="margin-top:10px;">${info("ven-manual-info", "Si ese día ya estaba cargado a mano, se reemplaza. Los días que vinieron del PDF del sistema no se pueden pisar a mano.")}</div>
   </div>
-  ${lista.length ? `<div class="hoy-wrap mb16"><table class="data-table">
+  ${lista.length ? plegable("ven-manual-lista", "Días cargados a mano en el período", `<div class="hoy-wrap"><table class="data-table">
     <thead><tr><th>Día (cargado a mano)</th>${esGerente() ? "" : "<th>Sucursal</th>"}<th>Blanco</th><th>Negro</th><th>IVA</th><th></th></tr></thead>
     <tbody>${lista.map((g) => `<tr>
       <td>${fmtDate(g.fecha)} <span class="nc-tag manual-tag">manual</span></td>${esGerente() ? "" : `<td>${sucursalTag(g.sucursal_id)}</td>`}
       <td class="fact">${fmtMoney(g.blanco)}</td><td class="nofact">${fmtMoney(g.negro)}</td><td>${fmtMoney(g.iva)}</td>
       <td><div class="hoy-acc"><button class="btn secondary small ico" data-vmedit="${g.sucursal_id}|${g.fecha}" title="Corregir" aria-label="Corregir">✎</button><button class="btn secondary small ico" data-vmdel="${g.sucursal_id}|${g.fecha}" title="Eliminar" aria-label="Eliminar">🗑</button></div></td>
     </tr>`).join("")}</tbody>
-  </table></div>` : ""}`;
+  </table></div>`, { resumen: `${lista.length} ${lista.length === 1 ? "día" : "días"}` }) : ""}`;
 }
 
 async function guardarVentaManual() {
@@ -1755,6 +1768,8 @@ const tituloMes = (m) => {
   const t = mesLabel(m), mayus = t[0].toUpperCase() + t.slice(1);
   return er.desde.slice(0, 4) === er.hasta.slice(0, 4) ? mayus.replace(/ \d{4}$/, "") : mayus;
 };
+/** Avisos cortos: hasta 3 meses se nombran; más, se resumen. */
+const listaMeses = (l) => (l.length > 3 ? `${l.length} meses, entre ${l[0]} y ${l[l.length - 1]}` : l.join(", "));
 const nombreGastoSuc = (id) => (id ? sucursalNombre(id) : "General (compartido)");
 
 /** Trae ventas, compras, gastos y la lista de conceptos de los meses elegidos (siempre todas las sucursales: los generales se reparten). */
@@ -1872,21 +1887,21 @@ function resultadosHtml() {
     : [[R, sucursalNombre(er.suc), sucColor(er.suc)]];
 
   return `
-  ${sinVentas.length ? `<div class="dup-aviso warn mb16">Sin ventas guardadas en: <b>${sinVentas.map(esc).join(", ")}</b>. Cargalas en la pestaña Ventas, si no el resultado da de menos.</div>` : ""}
-  ${sinGastos.length ? `<div class="dup-aviso warn mb16">Sin gastos operativos cargados en: <b>${sinGastos.map(esc).join(", ")}</b>${todas ? "" : " para esta sucursal"}. Cargalos abajo, en la lista de gastos operativos.</div>` : ""}
+  ${sinVentas.length ? `<div class="dup-aviso warn mb16">Sin ventas guardadas en: <b>${esc(listaMeses(sinVentas))}</b>. Cargalas en la pestaña Ventas, si no el resultado da de menos.</div>` : ""}
+  ${sinGastos.length ? `<div class="dup-aviso warn mb16">Sin gastos operativos cargados en: <b>${esc(listaMeses(sinGastos))}</b>${todas ? "" : " para esta sucursal"}. Cargalos abajo, en la lista de gastos operativos.</div>` : ""}
   <div class="kpi-row">
     <div class="kpi"><div class="kpi-label">Ventas totales${ivaTxt}</div><div class="kpi-value">${fmtMoney(T.ingresos)}</div><div class="total-sub">${todas ? "Todas las sucursales" : esc(sucursalNombre(er.suc))}</div></div>
     <div class="kpi"><div class="kpi-label">Margen bruto</div><div class="kpi-value">${fmtMoney(T.margen)}</div><div class="total-sub">${T.margenPct == null ? "—" : pct(T.margenPct) + " de las ventas"}</div></div>
     <div class="kpi ${T.resultado >= 0 ? "kpi-pos" : "kpi-neg"}"><div class="kpi-label">${T.resultado >= 0 ? "Ganancia" : "Pérdida"}</div><div class="kpi-value">${fmtMoney(Math.abs(T.resultado))}</div><div class="total-sub">${T.resultadoPct == null ? "—" : pct(T.resultadoPct) + " de las ventas"}</div></div>
   </div>
-  <div class="ventas-iva">Gastos operativos <b>${fmtMoney(T.fijos)}</b>${meses > 1 ? ` (promedio <b>${fmtMoney(T.fijos / meses)}</b> por mes)` : ""}
+  ${plegable("er-equilibrio", "Punto de equilibrio e IVA", `<div class="ventas-iva" style="margin-bottom:0;">Gastos operativos <b>${fmtMoney(T.fijos)}</b>${meses > 1 ? ` (promedio <b>${fmtMoney(T.fijos / meses)}</b> por mes)` : ""}
     ${T.equilibrio != null ? ` · Punto de equilibrio: con este margen hay que vender <b>${fmtMoney(T.equilibrio)}</b>${meses > 1 ? ` en el período (<b>${fmtMoney(T.equilibrio / meses)}</b> por mes)` : " en el mes"} para cubrir los gastos` : ""}
-    · Posición de IVA: <b>${fmtMoney(Math.abs(T.saldoIva))}</b> ${T.saldoIva >= 0 ? "a pagar" : "a favor"}</div>
+    · Posición de IVA: <b>${fmtMoney(Math.abs(T.saldoIva))}</b> ${T.saldoIva >= 0 ? "a pagar" : "a favor"}</div>`,
+    { resumen: T.equilibrio != null ? "Equilibrio " + fmtMoney(T.equilibrio / Math.max(1, meses)) + (meses > 1 ? " por mes" : "") : "" })}
 
   ${bloques.map(([r, titulo, clase]) => bloqueResumen(r, titulo, clase)).join("")}
 
-  <details class="chart-table mb16"><summary>Ver el detalle${todas ? " (todas las sucursales)" : ""}: blanco / negro y cada gasto</summary>
-  <div class="hoy-wrap" style="margin-top:8px;"><table class="data-table er-tabla">
+  ${plegable("er-detalle", `Detalle${todas ? " (todas las sucursales)" : ""}: blanco / negro y cada gasto`,`<div class="hoy-wrap"><table class="data-table er-tabla">
     <thead><tr><th>Concepto</th>${cols.map((c) => `<th class="er-mes">${esc(tituloMes(c.mes))}</th>`).join("")}${varios ? "<th>Total</th>" : ""}</tr></thead>
     <tbody>
       ${sec("Ventas")}
@@ -1907,12 +1922,12 @@ function resultadosHtml() {
       ${fila("Utilidad operativa (ganancia)", (c) => c.resultado, "er-final", signed)}
       ${fila("% Utilidad operativa", (c) => c.resultadoPct, "er-pct", pctOr)}
     </tbody>
-  </table></div></details>
+  </table></div>`)}
   <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
     <button class="btn small" id="btnErPdf">📄 Estado de resultados PDF</button>
     <button class="btn secondary small" id="btnErXls">📊 Excel</button>
   </div>
-  <div class="hint">Las compras del mes se toman como costo de ventas: si ese mes se compró mucho para stock (o se vendió stock viejo), el resultado del mes se mueve aunque el negocio no haya cambiado. Mirá varios meses juntos para ver la tendencia. ${esGerente() ? "La parte de los gastos generales (los compartidos entre sucursales) se calcula según lo que vendió tu sucursal ese mes." : 'Los gastos "General" se reparten entre las sucursales según lo que vendió cada una ese mes.'}</div>`;
+  ${info("er-info", `Las compras del mes se toman como costo de ventas: si ese mes se compró mucho para stock (o se vendió stock viejo), el resultado del mes se mueve aunque el negocio no haya cambiado. Mirá varios meses juntos para ver la tendencia. ${esGerente() ? "La parte de los gastos generales (los compartidos entre sucursales) se calcula según lo que vendió tu sucursal ese mes." : 'Los gastos "General" se reparten entre las sucursales según lo que vendió cada una ese mes.'}`, "ⓘ Cómo se calcula")}`;
 }
 
 function datosResultados() {
@@ -2011,7 +2026,7 @@ function gastosHtml() {
         <span class="gl-acc">${c.activo && esAdmin() ? `<button class="linkbtn" data-gxmover="${c.id}" data-dir="-1" title="Subir" aria-label="Subir">↑</button><button class="linkbtn" data-gxmover="${c.id}" data-dir="1" title="Bajar" aria-label="Bajar">↓</button><button class="linkbtn" data-gxren="${c.id}" title="Renombrar" aria-label="Renombrar">✎</button><button class="linkbtn" data-gxtoggle="${c.id}" title="Quitar de la lista" aria-label="Quitar de la lista">✕</button>` : ""}</span>
       </div>`; }).join("")}
     </div>
-    <div class="hint">Escribí el importe y pasá al siguiente con Tab o Enter: se guarda solo. Para borrar un importe, dejá el campo vacío. La lista es la misma todos los meses.</div>
+    <div style="margin-top:10px;">${info("gx-info", "Escribí el importe y pasá al siguiente con Tab o Enter: se guarda solo. Para borrar un importe, dejá el campo vacío. La lista es la misma todos los meses. La columna de la derecha muestra el mes anterior y cuánto subió (rojo) o bajó (verde).", "ⓘ Cómo se cargan")}</div>
     ${agregarHtml}
   </div>`;
   }
@@ -2101,6 +2116,7 @@ async function opConcepto(op, okMsg) {
 }
 
 function wireResultados() {
+  wirePlegables(document.getElementById("erBox") || document);
   on("btnErPdf", "click", () => generarResultadosPDF(datosResultados()));
   on("btnErXls", "click", async () => {
     try { await generarResultadosExcel(datosResultados()); } catch (e) { toast("No se pudo generar el Excel."); console.error(e); }
@@ -2221,6 +2237,7 @@ function wireMonto(el) {
 }
 
 function wirePage() {
+  wirePlegables();
   document.querySelectorAll("[data-copiatodo]").forEach((b) => b.addEventListener("click", copiaCompleta));
   if (route === "subir") {
     document.querySelectorAll("#grupoToggle button").forEach((btn) =>
