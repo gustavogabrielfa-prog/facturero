@@ -262,6 +262,7 @@ async function onSession(session) {
   const prevUser = state.session?.user?.id;
   state.session = session;
   if (!session) {
+    bloqueado = false; bloqueoError = "";
     unsubscribeRealtime();
     Object.assign(state, { perfil: null, sucursales: [], proveedores: [], booting: false, bootError: "" });
     comprobantes = []; listLoaded = false; draft = null; editId = null; ultimoProveedorId = ""; ultimaFecha = ""; ventasLibro = null; ventasPV = {}; ventasDetectada = null; ventasSucursal = "";
@@ -275,6 +276,10 @@ async function onSession(session) {
   try { await loadBase(); subscribeRealtime(); programarMedianoche(); }
   catch (e) { state.bootError = errorMsg(e); }
   state.booting = false;
+  // recién logueado: arranca a contar; sesión recuperada (recarga): se respeta lo que pasó
+  if (prevUser === undefined && leerActividad()) { ultimaActividad = 0; revisarInactividad(); }
+  actividadLista = true;
+  if (!bloqueado) { ultimaGrabada = 0; marcarActividad(); }
   render();
 }
 
@@ -289,6 +294,10 @@ function render() {
   if (state.bootError) { app.innerHTML = shell(pageError(state.bootError), true); wireShell(); return; }
   if (!state.perfil || (!esAdmin() && !state.perfil.sucursal_id)) {
     app.innerHTML = shell(pageSinSucursal(), true); wireShell(); return;
+  }
+  if (bloqueado) {
+    if (!document.getElementById("bloqueoForm")) { app.innerHTML = shell(pageBloqueo(), false); wireBloqueo(); }
+    return;
   }
 
   if (route === "listado" && !veListado()) route = "subir";
@@ -403,6 +412,76 @@ function pageLogin() {
     </form>
   </div>`;
 }
+
+/* ---------- BLOQUEO POR INACTIVIDAD (administrador y gerentes) ---------- */
+const MINUTOS_INACTIVIDAD = 10;
+const CLAVE_ACTIVIDAD = "facturero_ultima_actividad";   // compartida entre pestañas: cerrar / recargar no saltea el bloqueo
+let bloqueado = false, bloqueoError = "";
+let ultimaActividad = Date.now(), ultimaGrabada = 0;
+let actividadLista = false;   // hasta revisar la sesión recuperada, mover el mouse no cuenta (no se saltea el bloqueo recargando)
+const usaBloqueo = () => esAdmin() || esGerente();
+const leerActividad = () => { try { return Number(localStorage.getItem(CLAVE_ACTIVIDAD)) || 0; } catch { return 0; } };
+
+function marcarActividad() {
+  if (bloqueado || !actividadLista) return;
+  ultimaActividad = Date.now();
+  if (ultimaActividad - ultimaGrabada > 15000) {   // no escribir en cada movimiento del mouse
+    ultimaGrabada = ultimaActividad;
+    try { localStorage.setItem(CLAVE_ACTIVIDAD, String(ultimaActividad)); } catch { /* sin almacenamiento: vale solo esta pestaña */ }
+  }
+}
+
+/** Bloquea si pasó el tiempo sin uso (en esta pestaña o en otra del mismo navegador). */
+function revisarInactividad() {
+  if (bloqueado || !state.session || !state.perfil || !usaBloqueo()) return;
+  const ultima = Math.max(ultimaActividad, leerActividad());
+  if (Date.now() - ultima >= MINUTOS_INACTIVIDAD * 60000) bloquear();
+}
+
+function bloquear() {
+  syncDraft();   // lo que se estaba cargando queda guardado en memoria
+  bloqueado = true; bloqueoError = "";
+  document.querySelectorAll(".dlg-fondo").forEach((d) => d.remove());
+  render();
+}
+
+function pageBloqueo() {
+  return `<div class="lock-wrap">
+    <div class="brand-mark">🔒</div>
+    <h1 class="serif">Sesión bloqueada</h1>
+    <p>Por seguridad se bloqueó después de ${MINUTOS_INACTIVIDAD} minutos sin uso. Ingresá tu contraseña para seguir.</p>
+    <form id="bloqueoForm">
+      <div class="field" style="text-align:left;"><label>Usuario</label><input type="email" value="${esc(state.session.user.email)}" autocomplete="username" readonly></div>
+      <div class="field" style="text-align:left;"><label>Contraseña</label><input type="password" id="bloqueoPass" autocomplete="current-password" required autofocus></div>
+      <div class="lock-error ${bloqueoError ? "show" : ""}">${esc(bloqueoError)}</div>
+      <button class="btn" type="submit" id="btnDesbloquear">Desbloquear</button>
+    </form>
+    <button class="linkbtn" id="btnBloqueoSalir" style="margin-top:14px;">Salir y entrar con otro usuario</button>
+  </div>`;
+}
+
+function wireBloqueo() {
+  document.getElementById("bloqueoPass")?.focus();
+  on("bloqueoForm", "submit", async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById("btnDesbloquear"); btn.disabled = true; btn.textContent = "Verificando…";
+    const { error } = await sb.auth.signInWithPassword({ email: state.session.user.email, password: document.getElementById("bloqueoPass").value });
+    if (error) {
+      const el = document.querySelector("#bloqueoForm .lock-error");
+      if (el) { el.textContent = error.message === "Invalid login credentials" ? "Contraseña incorrecta." : errorMsg(error); el.classList.add("show"); }
+      btn.disabled = false; btn.textContent = "Desbloquear";
+      const pass = document.getElementById("bloqueoPass"); pass.value = ""; pass.focus();
+      return;
+    }
+    bloqueado = false; bloqueoError = ""; ultimaGrabada = 0; marcarActividad();
+    render();
+  });
+  on("btnBloqueoSalir", "click", async () => { bloqueado = false; await sb.auth.signOut(); location.hash = ""; });
+}
+
+for (const ev of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart", "scroll"]) window.addEventListener(ev, marcarActividad, { passive: true });
+setInterval(revisarInactividad, 20000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") revisarInactividad(); });
 
 function pageSinSucursal() {
   return `<div class="lock-wrap">
@@ -1688,6 +1767,7 @@ function wireLogin() {
   on("loginForm", "submit", async (e) => {
     e.preventDefault();
     const btn = document.getElementById("btnLogin"); btn.disabled = true; btn.textContent = "Entrando…";
+    actividadLista = true; ultimaGrabada = 0; marcarActividad();
     const { error } = await sb.auth.signInWithPassword({
       email: document.getElementById("loginEmail").value.trim(),
       password: document.getElementById("loginPass").value,
