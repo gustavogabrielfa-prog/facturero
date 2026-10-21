@@ -1855,7 +1855,7 @@ function resultadosHtml() {
 
   return `
   ${sinVentas.length ? `<div class="dup-aviso warn mb16">Sin ventas guardadas en: <b>${sinVentas.map(esc).join(", ")}</b>. Cargalas en la pestaña Ventas, si no el resultado da de menos.</div>` : ""}
-  ${sinGastos.length ? `<div class="dup-aviso warn mb16">Sin gastos operativos cargados en: <b>${sinGastos.map(esc).join(", ")}</b>${todas ? "" : " para esta sucursal"}. Cargalos abajo en la grilla.</div>` : ""}
+  ${sinGastos.length ? `<div class="dup-aviso warn mb16">Sin gastos operativos cargados en: <b>${sinGastos.map(esc).join(", ")}</b>${todas ? "" : " para esta sucursal"}. Cargalos abajo, en la lista de gastos operativos.</div>` : ""}
   <div class="kpi-row">
     <div class="kpi"><div class="kpi-label">Ventas totales${ivaTxt}</div><div class="kpi-value">${fmtMoney(T.ingresos)}</div><div class="total-sub">${todas ? "Todas las sucursales" : esc(sucursalNombre(er.suc))}</div></div>
     <div class="kpi"><div class="kpi-label">Margen bruto</div><div class="kpi-value">${fmtMoney(T.margen)}</div><div class="total-sub">${T.margenPct == null ? "—" : pct(T.margenPct) + " de las ventas"}</div></div>
@@ -1928,6 +1928,17 @@ function gxValor(cat, mes) {
   return (gx.rows || []).filter((r) => r.categoria === cat && r.mes.startsWith(mes) && (r.sucursal_id || null) === suc).reduce((a, r) => a + (Number(r.monto) || 0), 0);
 }
 
+/** Total cargado en un mes para la sucursal elegida (todos los gastos, también los quitados). */
+const gxTotalMes = (m) => (gx.rows || []).filter((r) => r.mes.startsWith(m) && (r.sucursal_id || null) === (gx.suc || null)).reduce((a, r) => a + (Number(r.monto) || 0), 0);
+
+/** Cuánto subió o bajó un gasto contra el mes anterior (subir es malo: rojo). */
+function difGasto(v, v0) {
+  if (!v || !v0) return "";
+  const d = v - v0;
+  if (Math.abs(d) < 0.005) return `<span class="gl-dif igual">= igual</span>`;
+  return `<span class="gl-dif ${d > 0 ? "sube" : "baja"}">${d > 0 ? "▲" : "▼"} ${fmtMoney(Math.abs(d))} (${d > 0 ? "+" : "−"}${pct(Math.abs(d / v0) * 100)})</span>`;
+}
+
 function gastosHtml() {
   if (gx.cargando && !gx.rows) return `<div class="loading">Cargando gastos…</div>`;
   if (gx.error) return `<div class="dup-aviso err">${esc(gx.error)}${/costos_fijos|gastos_conceptos|guardar_gasto/.test(gx.error) ? "<br>Falta ejecutar en Supabase las migraciones <b>014_costos_fijos.sql</b> y <b>015_gastos_operativos.sql</b>." : ""}</div>`;
@@ -1949,7 +1960,7 @@ function gastosHtml() {
 
   const controles = `<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:12px;">
       ${porMes
-        ? `<div class="badge-group gx-año" style="margin:0;"><button data-gxmesnav="-1" aria-label="Mes anterior">‹</button><button class="active gl-mes" disabled>${esc(mesLabel(gx.mes))}</button><button data-gxmesnav="1" aria-label="Mes siguiente">›</button></div>`
+        ? `<div class="gl-nav"><button class="btn secondary small" data-gxmesnav="-1" aria-label="Mes anterior">‹</button><input type="month" id="gxMesSel" value="${gx.mes}" max="${mesActual()}" aria-label="Mes"><button class="btn secondary small" data-gxmesnav="1" aria-label="Mes siguiente" ${gx.mes >= mesActual() ? "disabled" : ""}>›</button></div>`
         : `<div class="badge-group gx-año" style="margin:0;"><button data-gxaño="${gx.año - 1}" aria-label="Año anterior">‹</button><button class="active" disabled>${gx.año}</button><button data-gxaño="${gx.año + 1}" aria-label="Año siguiente">›</button></div>`}
       <div class="filters" style="margin:0;">
         ${state.sucursales.map((s) => `<button data-gxsuc="${s.id}" class="${gx.suc === s.id ? "active" : ""}">${esc(s.nombre)}</button>`).join("")}
@@ -1961,16 +1972,23 @@ function gastosHtml() {
   if (porMes) {
     const m = gx.mes, ant = mesMas(m, -1);
     const puedeCopiar = !totalMes(m) && filas.some((c) => gxValor(c.nombre, ant));
+    const año = m.slice(0, 4);
+    const mesesAño = Array.from({ length: 12 }, (_, i) => `${año}-${String(i + 1).padStart(2, "0")}`);
+    const t0 = totalMes(ant);
     return `<div class="panel mb16" style="padding:16px;">
     ${controles}
-    <div class="gl-total"><span>Total de gastos operativos · ${esc(nombreGastoSuc(gx.suc || null))}</span><b data-gxtot="${m}">${fmtMoney(totalMes(m))}</b></div>
+    <div class="gl-meses" role="group" aria-label="Meses de ${año}">${mesesAño.map((x, i) => {
+      const cargado = gxTotalMes(x) > 0, futuro = x > mesActual();
+      return `<button data-gxirmes="${x}" class="${x === m ? "active" : ""}${cargado ? " ok" : ""}" ${futuro ? "disabled" : ""} title="${esc(mesLabel(x))}${cargado ? " · cargado: " + fmtMoney(gxTotalMes(x)) : futuro ? "" : " · sin gastos cargados"}">${MES_CORTO[i]}${cargado ? " ✓" : ""}</button>`;
+    }).join("")}</div>
+    <div class="gl-total"><span>Total de gastos operativos · ${esc(nombreGastoSuc(gx.suc || null))}</span><span class="gl-total-der"><b data-gxtot="${m}">${fmtMoney(totalMes(m))}</b><small>${esc(mesLabel(ant))}: ${fmtMoney(t0)} <span data-gxdif="" data-ant="${t0}">${difGasto(totalMes(m), t0)}</span></small></span></div>
     ${puedeCopiar ? `<div class="gl-copiar"><button class="btn small" data-gxcopiar="${m}">📋 Copiar los importes de ${esc(mesLabel(ant))}</button><span class="hint" style="margin:0;">Después corregí los que cambiaron.</span></div>` : ""}
     <div class="gl-lista">
       <div class="gl-row gl-head"><span>Gasto</span><span>Importe de ${esc(mesLabel(m))}</span><span>Mes anterior</span><span></span></div>
       ${filas.map((c, f) => { const v0 = gxValor(c.nombre, ant); return `<div class="gl-row${c.activo ? "" : " gx-quitado"}">
         <span class="gl-nombre">${esc(c.nombre)}</span>
         <span>${celda(c, m, f, 0)}</span>
-        <span class="gl-ant">${v0 ? fmtMoney(v0) : "—"}</span>
+        <span class="gl-ant">${v0 ? fmtMoney(v0) : "—"}<small data-gxdif="${esc(c.nombre)}" data-ant="${v0}">${difGasto(gxValor(c.nombre, m), v0)}</small></span>
         <span class="gl-acc">${c.activo ? `<button class="linkbtn" data-gxmover="${c.id}" data-dir="-1" title="Subir" aria-label="Subir">↑</button><button class="linkbtn" data-gxmover="${c.id}" data-dir="1" title="Bajar" aria-label="Bajar">↓</button><button class="linkbtn" data-gxren="${c.id}" title="Renombrar" aria-label="Renombrar">✎</button><button class="linkbtn" data-gxtoggle="${c.id}" title="Quitar de la lista" aria-label="Quitar de la lista">✕</button>` : ""}</span>
       </div>`; }).join("")}
     </div>
@@ -2009,6 +2027,13 @@ function actualizarTotalesGx() {
     const td = document.querySelector(`[data-gxtot="${m}"]`); if (td) td.textContent = t || gx.vista !== "año" ? fmtMoney(t) : "";
   }
   const ta = document.querySelector(`[data-gxtot="año"]`); if (ta) ta.textContent = fmtMoney(año);
+  if (gx.vista !== "año") document.querySelectorAll("[data-gxdif]").forEach((el) => {
+    const cat = el.dataset.gxdif;
+    el.innerHTML = difGasto(cat ? gxValor(cat, gx.mes) : cats.reduce((a, c) => a + gxValor(c, gx.mes), 0), Number(el.dataset.ant) || 0);
+  });
+  // el ✓ del mes en los botones de meses
+  const bm = document.querySelector(`[data-gxirmes="${gx.mes}"]`);
+  if (bm) { const ok = gxTotalMes(gx.mes) > 0; bm.classList.toggle("ok", ok); bm.textContent = MES_CORTO[Number(gx.mes.slice(5)) - 1] + (ok ? " ✓" : ""); }
   document.querySelectorAll("[data-gxfila]").forEach((td) => { td.textContent = fmtMoney(meses.reduce((a, m) => a + gxValor(td.dataset.gxfila, m), 0)); });
 }
 
@@ -2347,11 +2372,15 @@ function wirePage() {
     wireResultados();
 
     // Grilla de gastos
-    document.querySelectorAll("[data-gxmesnav]").forEach((b) => b.addEventListener("click", () => {
-      gx.mes = mesMas(gx.mes, Number(b.dataset.gxmesnav));
-      const y = Number(gx.mes.slice(0, 4));
+    const irAMes = (m) => {
+      if (!m || m > mesActual()) return;
+      gx.mes = m;
+      const y = Number(m.slice(0, 4));
       if (y !== gx.año) { gx.año = y; gx.rows = null; cargarGastos(); } else render();
-    }));
+    };
+    document.querySelectorAll("[data-gxmesnav]").forEach((b) => b.addEventListener("click", () => irAMes(mesMas(gx.mes, Number(b.dataset.gxmesnav)))));
+    document.querySelectorAll("[data-gxirmes]").forEach((b) => b.addEventListener("click", () => irAMes(b.dataset.gxirmes)));
+    on("gxMesSel", "change", (e) => irAMes(e.target.value));
     document.querySelectorAll("[data-gxvista]").forEach((b) => b.addEventListener("click", () => {
       gx.vista = b.dataset.gxvista;
       if (gx.vista === "mes" && Number(gx.mes.slice(0, 4)) !== gx.año) gx.mes = gx.año === new Date().getFullYear() ? mesActual() : gx.año + "-01";
