@@ -650,7 +650,7 @@ const filasResumen = () => [
 /** Detalle: blanco / negro y cada gasto. tipo: sec | det | sub | margen | final | pct */
 function filasDetalle(R) {
   const iva = R.sinIva ? " (sin IVA)" : "";
-  const hayGen = R.total.generalesMes > 0 && R.total.parte != null;
+  const hayGen = R.total.generalesMes > 0 && R.cols.length > 0 && R.total.fijosGenerales > 0;
   return [
     ["sec", "Ventas"],
     ["det", `Ventas en blanco${iva}`, (c) => c.vb],
@@ -664,7 +664,7 @@ function filasDetalle(R) {
     ["pct", "% Margen bruto", (c) => c.margenPct],
     ["sec", "Gastos operativos"],
     ...R.categorias.map((cat) => ["det", cat, (c) => c.fijosCat[cat] || 0]),
-    ...(hayGen ? [["det", `Parte de gastos generales (${pctTxt(R.total.parte * 100)})`, (c) => c.fijosGenerales]] : []),
+    ...(hayGen ? [["det", `Parte de gastos generales (${R.total.parte != null ? pctTxt(R.total.parte * 100) : "según ventas"})`, (c) => c.fijosGenerales]] : []),
     ["sub", "Total de gastos operativos", (c) => c.fijos],
     ["final", "Utilidad operativa (ganancia)", (c) => c.resultado],
     ["pct", "% Utilidad operativa", (c) => c.resultadoPct],

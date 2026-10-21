@@ -39,9 +39,11 @@ export function finDeMes(mes) {
  * - Costos variables (comprobantes): facturado = blanco, no facturado = negro; las notas de crédito restan.
  * - Gastos operativos (costos_fijos): los de la sucursal; los generales se reparten entre las sucursales
  *   según lo que vendió cada una ese mes (si nadie vendió, en partes iguales).
+ * - generalesDados ({ "AAAA-MM": monto }): la parte de los generales ya repartida por la base (gerente, que no ve
+ *   las ventas de las otras sucursales); si viene, se usa tal cual en vez de repartir acá.
  * - sinIva: a lo blanco se le resta el IVA (débito en ventas, crédito en compras), que no es ingreso ni costo.
  */
-export function estadoResultados({ ventas, compras, costos, meses, foco, sucursalIds, sinIva = true, orden = [] }) {
+export function estadoResultados({ ventas, compras, costos, meses, foco, sucursalIds, sinIva = true, orden = [], generalesDados = null }) {
   const n = (v) => Number(v) || 0;
   const vacio = () => ({ vb: 0, vn: 0, ivaD: 0, cb: 0, cn: 0, ivaC: 0, fijos: {}, hayVentas: false });
   const agg = {};
@@ -77,7 +79,9 @@ export function estadoResultados({ ventas, compras, costos, meses, foco, sucursa
       c.ivaDebito += g.ivaD; c.ivaCredito += g.ivaC; c.hayVentas ||= g.hayVentas;
       for (const [cat, v] of Object.entries(g.fijos)) c.fijosCat[cat] = (c.fijosCat[cat] || 0) + v;
     }
-    if (!todas) {
+    if (!todas && generalesDados) {
+      c.generalesMes = c.fijosGenerales = generalesDados[mes] || 0;
+    } else if (!todas) {
       const gen = agg[mes]?.general;
       c.generalesMes = gen ? sumaFijos(gen.fijos) : 0;
       if (c.generalesMes) {
@@ -97,7 +101,7 @@ export function estadoResultados({ ventas, compras, costos, meses, foco, sucursa
     for (const k of ["ventasBlanco", "ventasNegro", "comprasBlanco", "comprasNegro", "ivaDebito", "ivaCredito", "fijosGenerales", "generalesMes"]) t[k] += c[k];
     for (const [cat, v] of Object.entries(c.fijosCat)) t.fijosCat[cat] = (t.fijosCat[cat] || 0) + v;
   }
-  if (t.generalesMes) t.parte = t.fijosGenerales / t.generalesMes;
+  if (t.generalesMes && !generalesDados) t.parte = t.fijosGenerales / t.generalesMes;
   const total = completar(t, sinIva);
 
   const presentes = new Set(cols.flatMap((c) => Object.keys(c.fijosCat)));

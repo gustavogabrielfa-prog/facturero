@@ -62,7 +62,7 @@ let ventasManual = { sucursal: "", fecha: todayISO(), blanco: "", negro: "", iva
 let ventasHist = { desde: monthRange()[0], hasta: monthRange()[1], suc: "todas", rows: null, cargando: false, error: "" };
 // Estado de resultados (admin): período en meses y sucursal; grilla de gastos operativos de un año
 const mesActual = () => todayISO().slice(0, 7);
-let er = { desde: mesActual().slice(0, 4) + "-01", hasta: mesActual(), suc: "todas", sinIva: true, datos: null, cargando: false, error: "" };
+let er = { desde: mesActual().slice(0, 4) + "-01", hasta: mesActual(), suc: "todas", sinIva: false, datos: null, cargando: false, error: "" };
 let gx = { vista: "mes", mes: mesActual(), año: new Date().getFullYear(), suc: null, conceptos: null, rows: null, cargando: false, error: "", editarLista: false };
 let provNuevoPendiente = null;   // { nombre, cuit } para precargar "+ Nuevo" al cargar desde ARCA
 let chartGran = null;   // null = automático según el rango de fechas
@@ -308,7 +308,7 @@ function render() {
   if (route === "listado" && !veListado()) route = "subir";
   if (route === "arca" && !esAdmin()) route = "subir";
   if (route === "ventas" && !veListado()) route = "subir";
-  if (route === "resultados" && !esAdmin()) route = "subir";
+  if (route === "resultados" && !veListado()) route = "subir";
   let body;
   if (route === "listado") body = pageListado();
   else if (route === "arca") body = pageArca();
@@ -355,7 +355,7 @@ function shell(bodyHtml, logged, tabs = false) {
       ${veListado() ? `<button data-route="listado" class="${route === "listado" ? "active" : ""}">🗂 Listado</button>` : ""}
       ${esAdmin() ? `<button data-route="arca" class="${route === "arca" ? "active" : ""}">🧾 Compara ARCA</button>` : ""}
       ${veListado() ? `<button data-route="ventas" class="${route === "ventas" ? "active" : ""}">💵 Ventas</button>` : ""}
-      ${esAdmin() ? `<button data-route="resultados" class="${route === "resultados" ? "active" : ""}">📈 Resultados</button>` : ""}
+      ${veListado() ? `<button data-route="resultados" class="${route === "resultados" ? "active" : ""}">📈 Resultados</button>` : ""}
     </div>` : ""}
     </div>
     ${bodyHtml}
@@ -1754,6 +1754,7 @@ const nombreGastoSuc = (id) => (id ? sucursalNombre(id) : "General (compartido)"
 
 /** Trae ventas, compras, gastos y la lista de conceptos de los meses elegidos (siempre todas las sucursales: los generales se reparten). */
 async function cargarResultados() {
+  if (esGerente()) er.suc = state.perfil.sucursal_id;
   er.cargando = true; er.error = ""; pintarResultados();
   const desde = er.desde + "-01", hasta = finDeMes(er.hasta);
   try {
@@ -1762,7 +1763,13 @@ async function cargarResultados() {
       fetchAll(() => sb.from("comprobantes").select("fecha, sucursal_id, grupo, tipo, monto, iva21, iva105, iva27, iva5, iva25").gte("fecha", desde).lte("fecha", hasta).order("fecha")),
       fetchAll(() => sb.from("costos_fijos").select("mes, sucursal_id, categoria, monto").gte("mes", desde).lte("mes", hasta).order("mes")),
     ]);
-    er.datos = { ventas, compras, costos };
+    let generalesDados = null;
+    if (esGerente()) {
+      const { data, error } = await sb.rpc("mis_gastos_generales", { p_desde: desde, p_hasta: hasta });
+      if (error) throw error;
+      generalesDados = Object.fromEntries((data || []).map((r) => [r.mes.slice(0, 7), Number(r.monto) || 0]));
+    }
+    er.datos = { ventas, compras, costos, generalesDados };
   } catch (e) { er.datos = null; er.error = errorMsg(e); }
   er.cargando = false; pintarResultados();
 }
@@ -1784,7 +1791,7 @@ function calcularResultados(foco = er.suc) {
 
 function pageResultados() {
   return `
-  <div class="pagehead"><h1 class="serif">Estado de resultados</h1><p>Ventas menos el costo de ventas (compras en blanco y en negro) menos los gastos operativos, mes por mes y por sucursal.</p></div>
+  <div class="pagehead"><h1 class="serif">Estado de resultados</h1><p>Ventas menos el costo de ventas (facturas en blanco y en negro) menos los gastos operativos, mes por mes${esGerente() ? " de " + esc(sucursalNombre(state.perfil.sucursal_id)) : " y por sucursal"}.</p></div>
 
   <section class="comp-full">
   <div class="trip-h">1 · Período y sucursal</div>
@@ -1794,10 +1801,10 @@ function pageResultados() {
       <div class="field" style="margin-bottom:12px;"><label>Desde (mes)</label><input type="month" id="erDesde" value="${er.desde}"></div>
       <div class="field" style="margin-bottom:12px;"><label>Hasta (mes)</label><input type="month" id="erHasta" value="${er.hasta}"></div>
     </div>
-    <div class="filters" style="margin-bottom:10px;">
+    ${esGerente() ? `<div class="hint" style="margin:0 0 10px;">Sucursal: <b>${esc(sucursalNombre(state.perfil.sucursal_id))}</b></div>` : `<div class="filters" style="margin-bottom:10px;">
       <button data-ersuc="todas" class="${er.suc === "todas" ? "active" : ""}">Todas las sucursales</button>
       ${state.sucursales.map((s) => `<button data-ersuc="${s.id}" class="${er.suc === s.id ? "active" : ""}">${esc(s.nombre)}</button>`).join("")}
-    </div>
+    </div>`}
     <label class="er-check"><input type="checkbox" id="erSinIva" ${er.sinIva ? "checked" : ""}> Restar el IVA de lo blanco (el IVA no es ingreso ni costo: se le debe o se le cobra a ARCA)</label>
   </div>
   </section>
@@ -1899,7 +1906,7 @@ function resultadosHtml() {
     <button class="btn small" id="btnErPdf">📄 Estado de resultados PDF</button>
     <button class="btn secondary small" id="btnErXls">📊 Excel</button>
   </div>
-  <div class="hint">Las compras del mes se toman como costo de ventas: si ese mes se compró mucho para stock (o se vendió stock viejo), el resultado del mes se mueve aunque el negocio no haya cambiado. Mirá varios meses juntos para ver la tendencia. Los gastos "General" se reparten entre las sucursales según lo que vendió cada una ese mes.</div>`;
+  <div class="hint">Las compras del mes se toman como costo de ventas: si ese mes se compró mucho para stock (o se vendió stock viejo), el resultado del mes se mueve aunque el negocio no haya cambiado. Mirá varios meses juntos para ver la tendencia. ${esGerente() ? "La parte de los gastos generales (los compartidos entre sucursales) se calcula según lo que vendió tu sucursal ese mes." : 'Los gastos "General" se reparten entre las sucursales según lo que vendió cada una ese mes.'}</div>`;
 }
 
 function datosResultados() {
@@ -1912,7 +1919,8 @@ function datosResultados() {
 
 /* --- Grilla de gastos: conceptos × meses de un año, por sucursal (o general) --- */
 async function cargarGastos() {
-  if (gx.suc === null) gx.suc = state.sucursales[0]?.id || "";   // arranca en la primera sucursal
+  if (esGerente()) gx.suc = state.perfil.sucursal_id;   // el gerente, siempre la suya
+  else if (gx.suc === null) gx.suc = state.sucursales[0]?.id || "";   // arranca en la primera sucursal
   gx.cargando = true; gx.error = ""; if (route === "resultados") render();
   try {
     // el año entero y el diciembre anterior (para "copiar el mes anterior" en enero)
@@ -1957,7 +1965,7 @@ function gastosHtml() {
   const totalMes = (m) => filas.reduce((a, c) => a + gxValor(c.nombre, m), 0);
   const quitados = gx.conceptos.filter((c) => !c.activo);
   const celda = (c, m, f, i) => { const v = gxValor(c.nombre, m); return `<input type="text" inputmode="decimal" autocomplete="off" class="monto gx-celda" data-gxcat="${esc(c.nombre)}" data-gxmes="${m}" data-f="${f}" data-c="${i}" value="${v ? esc(montoTexto(v)) : ""}" placeholder="0" aria-label="${esc(c.nombre)} ${esc(mesLabel(m))}">`; };
-  const agregarHtml = `<div class="provrow gl-add">
+  const agregarHtml = esGerente() ? `<div class="hint" style="margin-bottom:0;">La lista de gastos la arma el administrador. Si falta alguno, pedile que lo agregue.</div>` : `<div class="provrow gl-add">
     <input type="text" id="gxNuevo" placeholder="Nuevo gasto (ej.: Seguro del local)" style="flex:1; padding:10px 12px; border:1px solid var(--line); border-radius:4px; background:var(--panel); color:var(--ink);">
     <button id="btnGxAdd" type="button">+ Agregar gasto</button>
   </div>
@@ -1967,10 +1975,10 @@ function gastosHtml() {
       ${porMes
         ? `<div class="gl-nav"><button class="btn secondary small" data-gxmesnav="-1" aria-label="Mes anterior">‹</button><input type="month" id="gxMesSel" value="${gx.mes}" max="${mesActual()}" aria-label="Mes"><button class="btn secondary small" data-gxmesnav="1" aria-label="Mes siguiente" ${gx.mes >= mesActual() ? "disabled" : ""}>›</button></div>`
         : `<div class="badge-group gx-año" style="margin:0;"><button data-gxaño="${gx.año - 1}" aria-label="Año anterior">‹</button><button class="active" disabled>${gx.año}</button><button data-gxaño="${gx.año + 1}" aria-label="Año siguiente">›</button></div>`}
-      <div class="filters" style="margin:0;">
+      ${esGerente() ? `<span class="hint" style="margin:0;">Gastos de <b>${esc(sucursalNombre(state.perfil.sucursal_id))}</b></span>` : `<div class="filters" style="margin:0;">
         ${state.sucursales.map((s) => `<button data-gxsuc="${s.id}" class="${gx.suc === s.id ? "active" : ""}">${esc(s.nombre)}</button>`).join("")}
         <button data-gxsuc="" class="${!gx.suc ? "active" : ""}" title="Gastos compartidos: se reparten entre las sucursales según lo que vendió cada una">General (compartido)</button>
-      </div>
+      </div>`}
       <button class="linkbtn" data-gxvista="${porMes ? "año" : "mes"}" style="margin-left:auto;">${porMes ? "Ver el año completo" : "Volver a la lista del mes"}</button>
     </div>`;
 
@@ -1994,7 +2002,7 @@ function gastosHtml() {
         <span class="gl-nombre">${esc(c.nombre)}</span>
         <span>${celda(c, m, f, 0)}</span>
         <span class="gl-ant">${v0 ? fmtMoney(v0) : "—"}<small data-gxdif="${esc(c.nombre)}" data-ant="${v0}">${difGasto(gxValor(c.nombre, m), v0)}</small></span>
-        <span class="gl-acc">${c.activo ? `<button class="linkbtn" data-gxmover="${c.id}" data-dir="-1" title="Subir" aria-label="Subir">↑</button><button class="linkbtn" data-gxmover="${c.id}" data-dir="1" title="Bajar" aria-label="Bajar">↓</button><button class="linkbtn" data-gxren="${c.id}" title="Renombrar" aria-label="Renombrar">✎</button><button class="linkbtn" data-gxtoggle="${c.id}" title="Quitar de la lista" aria-label="Quitar de la lista">✕</button>` : ""}</span>
+        <span class="gl-acc">${c.activo && esAdmin() ? `<button class="linkbtn" data-gxmover="${c.id}" data-dir="-1" title="Subir" aria-label="Subir">↑</button><button class="linkbtn" data-gxmover="${c.id}" data-dir="1" title="Bajar" aria-label="Bajar">↓</button><button class="linkbtn" data-gxren="${c.id}" title="Renombrar" aria-label="Renombrar">✎</button><button class="linkbtn" data-gxtoggle="${c.id}" title="Quitar de la lista" aria-label="Quitar de la lista">✕</button>` : ""}</span>
       </div>`; }).join("")}
     </div>
     <div class="hint">Escribí el importe y pasá al siguiente con Tab o Enter: se guarda solo. Para borrar un importe, dejá el campo vacío. La lista es la misma todos los meses.</div>
