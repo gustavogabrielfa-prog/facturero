@@ -1745,6 +1745,11 @@ function datosVentas() {
 
 /* ---------- ESTADO DE RESULTADOS (admin): ventas − costo de ventas − gastos operativos ---------- */
 const MES_CORTO = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+/** Encabezado de columna: el mes completo ("Enero"); con el año si el período abarca más de uno. */
+const tituloMes = (m) => {
+  const t = mesLabel(m), mayus = t[0].toUpperCase() + t.slice(1);
+  return er.desde.slice(0, 4) === er.hasta.slice(0, 4) ? mayus.replace(/ \d{4}$/, "") : mayus;
+};
 const nombreGastoSuc = (id) => (id ? sucursalNombre(id) : "General (compartido)");
 
 /** Trae ventas, compras, gastos y la lista de conceptos de los meses elegidos (siempre todas las sucursales: los generales se reparten). */
@@ -1817,7 +1822,7 @@ function bloqueResumen(R, titulo, clase) {
   return `<div class="er-bloque ${clase}">
     <div class="er-bloque-h">${esc(titulo)}</div>
     <div class="er-bloque-scroll"><table class="data-table er-tabla">
-      <thead><tr><th></th>${cols.map((c) => `<th>${esc(varios ? MES_CORTO[Number(c.mes.slice(5)) - 1] + (er.desde.slice(0, 4) !== er.hasta.slice(0, 4) ? " " + c.mes.slice(2, 4) : "") : mesLabel(c.mes))}</th>`).join("")}${varios ? "<th>Total</th>" : ""}</tr></thead>
+      <thead><tr><th></th>${cols.map((c) => `<th class="er-mes">${esc(tituloMes(c.mes))}</th>`).join("")}${varios ? "<th>Total</th>" : ""}</tr></thead>
       <tbody>
         ${fila("Ventas totales", (c) => c.ingresos)}
         ${fila("Costo de ventas", (c) => c.variables)}
@@ -1869,7 +1874,7 @@ function resultadosHtml() {
 
   <details class="chart-table mb16"><summary>Ver el detalle${todas ? " (todas las sucursales)" : ""}: blanco / negro y cada gasto</summary>
   <div class="hoy-wrap" style="margin-top:8px;"><table class="data-table er-tabla">
-    <thead><tr><th>Concepto</th>${cols.map((c) => `<th>${esc(varios ? mesLabel(c.mes, true) : mesLabel(c.mes))}</th>`).join("")}${varios ? "<th>Total</th>" : ""}</tr></thead>
+    <thead><tr><th>Concepto</th>${cols.map((c) => `<th class="er-mes">${esc(tituloMes(c.mes))}</th>`).join("")}${varios ? "<th>Total</th>" : ""}</tr></thead>
     <tbody>
       ${sec("Ventas")}
       ${fila(`Ventas en blanco${ivaTxt}`, (c) => c.vb, "er-det")}
