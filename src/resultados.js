@@ -1,10 +1,4 @@
-/* Estado de resultados: ventas (ingresos) − compras (costos variables) − costos fijos, mes por mes. */
-
-export const CATEGORIAS_FIJOS = [
-  "Alquiler", "Sueldos y cargas sociales", "Servicios (luz, agua, gas)", "Teléfono e internet",
-  "Honorarios profesionales", "Impuestos y tasas", "Seguros", "Sistemas y software",
-  "Mantenimiento y limpieza", "Gastos bancarios", "Otros",
-];
+/* Estado de resultados: ventas − costo de ventas (compras) − gastos operativos, mes por mes. */
 
 const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 
@@ -43,11 +37,11 @@ export function finDeMes(mes) {
  * Arma el estado de resultados por mes para una sucursal o para todas.
  * - Ventas (ventas_diarias): blanco / negro según el punto de venta.
  * - Costos variables (comprobantes): facturado = blanco, no facturado = negro; las notas de crédito restan.
- * - Costos fijos (costos_fijos): los de la sucursal; los generales se reparten entre las sucursales
+ * - Gastos operativos (costos_fijos): los de la sucursal; los generales se reparten entre las sucursales
  *   según lo que vendió cada una ese mes (si nadie vendió, en partes iguales).
  * - sinIva: a lo blanco se le resta el IVA (débito en ventas, crédito en compras), que no es ingreso ni costo.
  */
-export function estadoResultados({ ventas, compras, costos, meses, foco, sucursalIds, sinIva = true }) {
+export function estadoResultados({ ventas, compras, costos, meses, foco, sucursalIds, sinIva = true, orden = [] }) {
   const n = (v) => Number(v) || 0;
   const vacio = () => ({ vb: 0, vn: 0, ivaD: 0, cb: 0, cn: 0, ivaC: 0, fijos: {}, hayVentas: false });
   const agg = {};
@@ -107,8 +101,9 @@ export function estadoResultados({ ventas, compras, costos, meses, foco, sucursa
   const total = completar(t, sinIva);
 
   const presentes = new Set(cols.flatMap((c) => Object.keys(c.fijosCat)));
-  const categorias = [...CATEGORIAS_FIJOS.filter((c) => presentes.has(c)),
-    ...[...presentes].filter((c) => !CATEGORIAS_FIJOS.includes(c)).sort((a, b) => a.localeCompare(b))];
+  // en el orden de la lista de gastos; los que no están en la lista, al final
+  const categorias = [...orden.filter((c) => presentes.has(c)),
+    ...[...presentes].filter((c) => !orden.includes(c)).sort((a, b) => a.localeCompare(b))];
 
   return { cols, total, categorias, sinIva };
 }
@@ -126,7 +121,7 @@ function completar(c, sinIva) {
   return {
     ...c, vb, cb, ingresos, variables, margen, fijos, resultado, margenPct,
     resultadoPct: ingresos ? (resultado / ingresos) * 100 : null,
-    // ventas necesarias para cubrir los costos fijos con el margen de ese período
+    // ventas necesarias para cubrir los gastos operativos con el margen de ese período
     equilibrio: margen > 0 && ingresos > 0 ? fijos / (margen / ingresos) : null,
     saldoIva: c.ivaDebito - c.ivaCredito,
   };

@@ -636,36 +636,48 @@ export async function generarComparativoExcel({ desde, hasta, foco, general, suc
   XLSX.writeFile(wb, `facturero_ventas_vs_compras_${desde}_a_${hasta}.xlsx`);
 }
 
-/** Filas del estado de resultados (mismo orden en el PDF y en el Excel). tipo: sec | det | sub | margen | final | pct */
-function filasResultados(R) {
+/** Resumen como la planilla: ventas, costo, margen, gastos, utilidad. tipo: det | sub | final | pct */
+const filasResumen = () => [
+  ["det", "Ventas totales", (c) => c.ingresos],
+  ["det", "Costo de ventas", (c) => c.variables],
+  ["sub", "Margen bruto", (c) => c.margen],
+  ["pct", "% Margen bruto", (c) => c.margenPct],
+  ["det", "Total de gastos operativos", (c) => c.fijos],
+  ["final", "Utilidad operativa (ganancia)", (c) => c.resultado],
+  ["pct", "% Utilidad operativa", (c) => c.resultadoPct],
+];
+
+/** Detalle: blanco / negro y cada gasto. tipo: sec | det | sub | margen | final | pct */
+function filasDetalle(R) {
   const iva = R.sinIva ? " (sin IVA)" : "";
   const hayGen = R.total.generalesMes > 0 && R.total.parte != null;
   return [
-    ["sec", "Ingresos (ventas)"],
+    ["sec", "Ventas"],
     ["det", `Ventas en blanco${iva}`, (c) => c.vb],
     ["det", "Ventas en negro", (c) => c.ventasNegro],
-    ["sub", "Total ingresos", (c) => c.ingresos],
-    ["sec", "Costos variables (compras de mercadería)"],
+    ["sub", "Ventas totales", (c) => c.ingresos],
+    ["sec", "Costo de ventas (compras de mercadería)"],
     ["det", `Compras facturadas${iva}`, (c) => c.cb],
     ["det", "Compras no facturadas", (c) => c.comprasNegro],
-    ["sub", "Total costos variables", (c) => c.variables],
+    ["sub", "Costo de ventas", (c) => c.variables],
     ["margen", "Margen bruto", (c) => c.margen],
-    ["pct", "% sobre ventas", (c) => c.margenPct],
-    ["sec", "Costos fijos"],
+    ["pct", "% Margen bruto", (c) => c.margenPct],
+    ["sec", "Gastos operativos"],
     ...R.categorias.map((cat) => ["det", cat, (c) => c.fijosCat[cat] || 0]),
-    ...(hayGen ? [["det", `Parte de costos generales (${pctTxt(R.total.parte * 100)})`, (c) => c.fijosGenerales]] : []),
-    ["sub", "Total costos fijos", (c) => c.fijos],
-    ["final", "Resultado", (c) => c.resultado],
-    ["pct", "% sobre ventas", (c) => c.resultadoPct],
+    ...(hayGen ? [["det", `Parte de gastos generales (${pctTxt(R.total.parte * 100)})`, (c) => c.fijosGenerales]] : []),
+    ["sub", "Total de gastos operativos", (c) => c.fijos],
+    ["final", "Utilidad operativa (ganancia)", (c) => c.resultado],
+    ["pct", "% Utilidad operativa", (c) => c.resultadoPct],
   ];
 }
 
-export function generarResultadosPDF({ R, desde, hasta, foco, mesLabel }) {
+export function generarResultadosPDF({ R, bloques, desde, hasta, foco, mesLabel }) {
   const cols = R.cols, T = R.total, varios = cols.length > 1;
   const doc = new jsPDF({ orientation: cols.length > 4 ? "landscape" : "portrait" });
   const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 14, AN = W - 2 * M;
   const C = { marca: [23, 96, 92], marcaSuave: [233, 242, 241], tinta: [18, 33, 28], gris: [93, 107, 100], linea: [216, 221, 215],
     suave: [244, 246, 243], fact: [29, 113, 70], nc: [156, 51, 34], blanco: [255, 255, 255] };
+  const SUC = [[31, 95, 168], [122, 63, 160], [14, 124, 134], [138, 75, 28], [176, 58, 111], [74, 90, 18]];
   const color = (c) => doc.setTextColor(...c), relleno = (c) => doc.setFillColor(...c), trazo = (c) => doc.setDrawColor(...c);
   const fuente = (tam, estilo = "normal") => { doc.setFontSize(tam); doc.setFont("helvetica", estilo); };
   const colorRes = (v) => (v >= 0 ? C.fact : C.nc);
@@ -680,7 +692,7 @@ export function generarResultadosPDF({ R, desde, hasta, foco, mesLabel }) {
   y = 40;
 
   const tarjetas = [
-    [`INGRESOS${R.sinIva ? " (SIN IVA)" : ""}`, T.ingresos, C.tinta, T.ingresos ? `Blanco ${pctTxt((T.vb / T.ingresos) * 100)} · Negro ${pctTxt((T.ventasNegro / T.ingresos) * 100)}` : ""],
+    [`VENTAS TOTALES${R.sinIva ? " (SIN IVA)" : ""}`, T.ingresos, C.tinta, T.ingresos ? `Blanco ${pctTxt((T.vb / T.ingresos) * 100)} · Negro ${pctTxt((T.ventasNegro / T.ingresos) * 100)}` : ""],
     ["MARGEN BRUTO", T.margen, C.tinta, T.margenPct == null ? "" : `${pctTxt(T.margenPct)} de las ventas`],
     [T.resultado >= 0 ? "GANANCIA" : "PÉRDIDA", Math.abs(T.resultado), colorRes(T.resultado), T.resultadoPct == null ? "" : `${pctTxt(T.resultadoPct)} de las ventas`],
   ];
@@ -696,49 +708,60 @@ export function generarResultadosPDF({ R, desde, hasta, foco, mesLabel }) {
   y += th + 8;
   fuente(9); color(C.tinta);
   const meses = cols.length;
-  doc.text(`Costos fijos ${fmtMoney(T.fijos)}${meses > 1 ? ` (promedio ${fmtMoney(T.fijos / meses)} por mes)` : ""} · Posición de IVA: ${fmtMoney(Math.abs(T.saldoIva))} ${T.saldoIva >= 0 ? "a pagar" : "a favor"}`, M, y);
+  doc.text(`Gastos operativos ${fmtMoney(T.fijos)}${meses > 1 ? ` (promedio ${fmtMoney(T.fijos / meses)} por mes)` : ""} · Posición de IVA: ${fmtMoney(Math.abs(T.saldoIva))} ${T.saldoIva >= 0 ? "a pagar" : "a favor"}`, M, y);
   if (T.equilibrio != null) {
     y += 5; color(C.gris);
-    doc.text(`Punto de equilibrio: hay que vender ${fmtMoney(T.equilibrio)}${meses > 1 ? ` en el período (${fmtMoney(T.equilibrio / meses)} por mes)` : " en el mes"} para cubrir los costos fijos.`, M, y);
+    doc.text(`Punto de equilibrio: hay que vender ${fmtMoney(T.equilibrio)}${meses > 1 ? ` en el período (${fmtMoney(T.equilibrio / meses)} por mes)` : " en el mes"} para cubrir los gastos operativos.`, M, y);
   }
   y += 10;
 
-  // Tabla: concepto + un mes por columna (+ total)
-  const valores = varios ? [...cols, T] : cols;
-  const wc = Math.min(70, AN * 0.34), wv = (AN - wc) / valores.length;
-  const tam = valores.length > 8 ? 6.6 : 8;
-  const encabezado = () => {
-    relleno(C.marca); doc.rect(M, y, AN, 7.5, "F"); fuente(tam - 0.2, "bold"); color(C.blanco); y += 5;
-    doc.text("Concepto", M + 2, y);
-    valores.forEach((c, i) => doc.text(c.mes === "total" ? "Total" : mesLabel(c.mes, true), M + wc + (i + 1) * wv - 2, y, { align: "right" }));
-    y += 2.5;
-  };
-  encabezado();
-  for (const [tipo, label, get] of filasResultados(R)) {
-    const alto = tipo === "sec" ? 8 : tipo === "pct" ? 5.2 : 6.4;
-    if (y + alto > H - 16) { doc.addPage(); y = 16; encabezado(); }
-    if (tipo === "sec") { y += 5.6; fuente(tam - 0.6, "bold"); color(C.marca); doc.text(label.toUpperCase(), M + 2, y); y += 2.4; continue; }
-    if (tipo === "margen" || tipo === "final") {
-      relleno(tipo === "final" ? C.marcaSuave : C.suave); doc.rect(M, y, AN, alto, "F");
-      trazo(C.marca); doc.setLineWidth(0.5); doc.line(M, y, W - M, y); doc.setLineWidth(0.2);
+  // Tabla genérica: concepto + un mes por columna (+ total)
+  const wc = cols.length > 6 ? 50 : Math.min(62, AN * 0.3);
+  const tam = (n) => (n > 10 ? 6.2 : n > 8 ? 6.6 : 8);
+  const tabla = (Rx, filas, titulo, colTitulo) => {
+    const valores = varios ? [...Rx.cols, Rx.total] : Rx.cols;
+    const wv = (AN - wc) / valores.length, t = tam(valores.length);
+    const encabezado = () => {
+      relleno(colTitulo || C.marca); doc.rect(M, y, AN, 7.5, "F"); fuente(t - 0.2, "bold"); color(C.blanco); y += 5;
+      doc.text(titulo, M + 2, y);
+      valores.forEach((c, i) => doc.text(c.mes === "total" ? "Total" : mesLabel(c.mes, true), M + wc + (i + 1) * wv - 2, y, { align: "right" }));
+      y += 2.5;
+    };
+    // que el bloque no quede cortado: si no entra entero (o al menos el principio del detalle), página nueva
+    const altoTabla = 10 + filas.reduce((a, [t]) => a + (t === "sec" ? 8 : t === "pct" ? 5.2 : 6.4), 0);
+    if (y + Math.min(altoTabla, 60) > H - 16) { doc.addPage(); y = 16; }
+    encabezado();
+    for (const [tipo, label, get] of filas) {
+      const alto = tipo === "sec" ? 8 : tipo === "pct" ? 5.2 : 6.4;
+      if (y + alto > H - 16) { doc.addPage(); y = 16; encabezado(); }
+      if (tipo === "sec") { y += 5.6; fuente(t - 0.6, "bold"); color(C.marca); doc.text(label.toUpperCase(), M + 2, y); y += 2.4; continue; }
+      if (tipo === "margen" || tipo === "final") {
+        relleno(tipo === "final" ? C.marcaSuave : C.suave); doc.rect(M, y, AN, alto, "F");
+        trazo(C.marca); doc.setLineWidth(0.5); doc.line(M, y, W - M, y); doc.setLineWidth(0.2);
+      }
+      y += alto - 1.9;
+      const fuerte = tipo !== "det" && tipo !== "pct";
+      fuente(tipo === "pct" ? t - 1 : t, fuerte ? "bold" : "normal"); color(tipo === "pct" ? C.gris : C.tinta);
+      doc.text(label, M + (tipo === "det" && filas[0][0] === "sec" ? 5 : 2), y);
+      valores.forEach((c, i) => {
+        const v = get(c);
+        const txt = tipo === "pct" ? (v == null ? "-" : pctTxt(v)) : fmtMoney(v);
+        color(tipo === "pct" ? C.gris : (tipo === "margen" || tipo === "final" || (tipo === "sub" && filas[0][0] !== "sec")) ? colorRes(v) : C.tinta);
+        doc.text(txt, M + wc + (i + 1) * wv - 2, y, { align: "right" });
+      });
+      y += 1.9;
+      if (tipo === "det" || tipo === "sub") { trazo(C.linea); doc.line(M, y, W - M, y); }
     }
-    y += alto - 1.9;
-    const fuerte = tipo !== "det" && tipo !== "pct";
-    fuente(tipo === "pct" ? tam - 1 : tam, fuerte ? "bold" : "normal"); color(tipo === "pct" ? C.gris : C.tinta);
-    doc.text(label, M + (tipo === "det" ? 5 : 2), y);
-    valores.forEach((c, i) => {
-      const v = get(c);
-      const txt = tipo === "pct" ? (v == null ? "-" : pctTxt(v)) : fmtMoney(v);
-      color(tipo === "pct" ? C.gris : (tipo === "margen" || tipo === "final") ? colorRes(v) : C.tinta);
-      doc.text(txt, M + wc + (i + 1) * wv - 2, y, { align: "right" });
-    });
-    y += 1.9;
-    if (tipo === "det" || tipo === "sub") { trazo(C.linea); doc.line(M, y, W - M, y); }
-  }
-  y += 8;
+    y += 9;
+  };
+
+  (bloques || [{ nombre: foco, R }]).forEach((b, i, arr) => tabla(b.R, filasResumen(), b.nombre, i === arr.length - 1 && arr.length > 1 ? C.tinta : SUC[i % SUC.length]));
+  doc.addPage(); y = 16;
+  fuente(12, "bold"); color(C.marca); doc.text(`Detalle · ${foco}`, M, y); y += 5;
+  tabla(R, filasDetalle(R), "Concepto");
   if (y > H - 26) { doc.addPage(); y = 20; }
   fuente(7.5); color(C.gris);
-  doc.text(doc.splitTextToSize("Las compras del mes se toman como costo de la mercadería vendida (no se mide la variación de stock). Los costos generales se reparten entre sucursales según lo que vendió cada una.", AN), M, y);
+  doc.text(doc.splitTextToSize("Las compras del mes se toman como costo de ventas (no se mide la variación de stock). Los gastos generales se reparten entre sucursales según lo que vendió cada una.", AN), M, y);
 
   const generado = new Date().toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" });
   const paginas = doc.getNumberOfPages();
@@ -751,29 +774,39 @@ export function generarResultadosPDF({ R, desde, hasta, foco, mesLabel }) {
   doc.save(`facturero_estado_resultados_${desde}_a_${hasta}.pdf`);
 }
 
-export async function generarResultadosExcel({ R, desde, hasta, foco, mesLabel }) {
+export async function generarResultadosExcel({ R, bloques, desde, hasta, foco, mesLabel }) {
   const XLSX = await import("xlsx");
   const r2 = (n) => Math.round(n * 100) / 100;
   const varios = R.cols.length > 1;
-  const valores = varios ? [...R.cols, R.total] : R.cols;
-  const def = filasResultados(R);
-  const filas = def.map(([tipo, label, get]) => (tipo === "sec" ? [label.toUpperCase()]
-    : [tipo === "det" ? "   " + label : label, ...valores.map((c) => { const v = get(c); return v == null ? "" : tipo === "pct" ? v / 100 : r2(v); })]));
-  const ws = XLSX.utils.aoa_to_sheet([
+  const encab = (Rx, titulo) => [titulo, ...(varios ? [...Rx.cols, Rx.total] : Rx.cols).map((c) => (c.mes === "total" ? "Total" : mesLabel(c.mes)))];
+  const valoresDe = (Rx) => (varios ? [...Rx.cols, Rx.total] : Rx.cols);
+  const aoa = [
     ["Facturero — Estado de resultados"],
     ["Período", desde === hasta ? mesLabel(desde) : `${mesLabel(desde)} a ${mesLabel(hasta)}`], ["Vista", foco],
     ["Importes", R.sinIva ? "Blanco sin IVA" : "Con IVA"], [],
-    ["Concepto", ...valores.map((c) => (c.mes === "total" ? "Total" : mesLabel(c.mes)))],
-    ...filas,
-  ]);
-  // las filas de datos empiezan en la fila 7 de la hoja (índice 6)
-  for (let i = 0; i < def.length; i++) {
-    for (let c = 1; c <= valores.length; c++) {
-      const cell = ws[XLSX.utils.encode_cell({ r: 6 + i, c })];
-      if (cell && cell.t === "n") cell.z = def[i][0] === "pct" ? "0.0%" : "#,##0.00";
+  ];
+  const tipos = [];   // tipo de cada fila de aoa, para el formato
+  const agregar = (Rx, filas, titulo) => {
+    aoa.push(encab(Rx, titulo)); tipos[aoa.length - 1] = "head";
+    for (const [tipo, label, get] of filas) {
+      aoa.push(tipo === "sec" ? [label.toUpperCase()]
+        : [tipo === "det" && filas[0][0] === "sec" ? "   " + label : label, ...valoresDe(Rx).map((c) => { const v = get(c); return v == null ? "" : tipo === "pct" ? v / 100 : r2(v); })]);
+      tipos[aoa.length - 1] = tipo;
     }
-  }
-  ws["!cols"] = [{ wch: 40 }, ...valores.map(() => ({ wch: 16 }))];
+    aoa.push([]);
+  };
+  for (const b of bloques || [{ nombre: foco, R }]) agregar(b.R, filasResumen(), b.nombre);
+  agregar(R, filasDetalle(R), `Detalle · ${foco}`);
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const ncols = valoresDe(R).length;
+  aoa.forEach((_, r) => {
+    if (!tipos[r] || tipos[r] === "head" || tipos[r] === "sec") return;
+    for (let c = 1; c <= ncols; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      if (cell && cell.t === "n") cell.z = tipos[r] === "pct" ? "0.0%" : "#,##0.00";
+    }
+  });
+  ws["!cols"] = [{ wch: 40 }, ...Array(ncols).fill({ wch: 16 })];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Estado de resultados");
   XLSX.writeFile(wb, `facturero_estado_resultados_${desde}_a_${hasta}.xlsx`);

@@ -386,3 +386,30 @@ header.top{padding:2px 0 8px;}
 .er-tabla tr.er-margen td, .er-tabla tr.er-final td{font-weight:700; font-size:14px; border-top:2px solid var(--ink);}
 .er-tabla tr.er-final td{background:color-mix(in srgb, var(--accent) 10%, transparent);}
 .er-tabla tr.er-pct td{font-size:12px; color:var(--muted); padding-top:4px;}
+/* Estado de resultados: bloques por sucursal (como la planilla) */
+.er-bloque{background:var(--panel); border:1px solid var(--line); border-left-width:6px; border-radius:6px; margin-bottom:14px; overflow:hidden;}
+.er-bloque.suc-c0{border-left-color:#1f5fa8;} .er-bloque.suc-c1{border-left-color:#7a3fa0;} .er-bloque.suc-c2{border-left-color:#0e7c86;}
+.er-bloque.suc-c3{border-left-color:#8a4b1c;} .er-bloque.suc-c4{border-left-color:#b03a6f;} .er-bloque.suc-c5{border-left-color:#4a5a12;}
+.er-bloque.er-total{border-left-color:var(--ink);}
+.er-bloque[class*="suc-c"]{background-color:var(--panel);}
+.er-bloque-h{padding:10px 14px 4px; font-weight:700; font-size:14px;}
+.er-bloque-scroll{overflow-x:auto; padding:0 14px 6px;}
+/* Grilla de gastos operativos */
+.gx-wrap{overflow-x:auto; border:1px solid var(--line); border-radius:6px;}
+.gx-tabla{border-collapse:collapse; font-size:12.5px; min-width:100%;}
+.gx-tabla th, .gx-tabla td{border:1px solid var(--line); padding:0; text-align:right; white-space:nowrap;}
+.gx-tabla th{padding:6px 8px; font-size:11px; text-transform:uppercase; color:var(--muted); background:var(--paper); vertical-align:top;}
+.gx-tabla .gx-con{text-align:left; padding:6px 10px; position:sticky; left:0; background:var(--panel); z-index:1; min-width:170px; font-weight:600;}
+.gx-tabla th.gx-con{background:var(--paper); color:var(--ink);}
+.gx-tabla td{padding:0;}
+.gx-celda{width:100px; border:0; background:transparent; color:var(--ink); font:inherit; text-align:right; padding:6px 8px; box-sizing:border-box;}
+.gx-celda:focus{outline:2px solid var(--accent); outline-offset:-2px; background:var(--panel);}
+.gx-celda.gx-guardando{opacity:.5;} .gx-celda.gx-ok{background:var(--facturado-bg);} .gx-celda.gx-error{background:var(--danger-bg); color:var(--danger);}
+.gx-tabla tr.gx-total td{font-weight:700; padding:6px 8px; background:var(--facturado-bg); color:var(--facturado);}
+.gx-tabla tr.gx-total td.gx-con{background:var(--facturado-bg);}
+.gx-tabla td.gx-fila-tot{padding:6px 8px; font-weight:700; background:var(--paper);}
+.gx-tabla tr.gx-quitado .gx-con{color:var(--muted); font-style:italic;}
+.gx-copiar{display:block; margin:3px auto 0; font-size:10px; padding:1px 5px; border:1px solid var(--line); border-radius:3px; background:var(--panel); color:var(--accent); cursor:pointer; text-transform:none;}
+.gx-año button{padding:6px 12px;}
+.er-bloque .er-tabla td:first-child, .er-bloque .er-tabla th:first-child{position:sticky; left:0; background:var(--panel); z-index:1; padding-right:12px;}
+.er-bloque .er-tabla tr.er-final td:first-child{background:color-mix(in srgb, var(--accent) 10%, var(--panel));}

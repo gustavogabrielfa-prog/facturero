@@ -8,7 +8,7 @@ import {
 import { generarReportePDF, generarReporteExcel, generarInformeArca, generarInformeVentasPDF, generarInformeVentasExcel, generarComparativoPDF, generarComparativoExcel, generarResultadosPDF, generarResultadosExcel } from "./pdf.js";
 import { leerArchivoArca, compararArca, rangoArca } from "./arca.js";
 import { leerLibroVentas, puntosDeVenta, resumenVentas, filasParaGuardar, resumenGuardado, compararVentasCompras } from "./ventas.js";
-import { CATEGORIAS_FIJOS, estadoResultados, mesesEntre, mesMas, mesLabel, finDeMes } from "./resultados.js";
+import { estadoResultados, mesesEntre, mesMas, mesLabel, finDeMes } from "./resultados.js";
 
 /* ---------- STATE ---------- */
 const state = {
@@ -60,10 +60,10 @@ let ventasGuardando = false;
 let ventasDetectada = null;
 let ventasManual = { sucursal: "", fecha: todayISO(), blanco: "", negro: "", iva: "", guardando: false };
 let ventasHist = { desde: monthRange()[0], hasta: monthRange()[1], suc: "todas", rows: null, cargando: false, error: "" };
-// Estado de resultados (admin): período en meses, sucursal y costos fijos del mes elegido
+// Estado de resultados (admin): período en meses y sucursal; grilla de gastos operativos de un año
 const mesActual = () => todayISO().slice(0, 7);
-let er = { desde: mesActual(), hasta: mesActual(), suc: "todas", sinIva: true, datos: null, cargando: false, error: "" };
-let cf = { mes: mesActual(), rows: null, previos: [], cargando: false, error: "", id: null, sucursal: "", categoria: CATEGORIAS_FIJOS[0], concepto: "", monto: "", guardando: false };
+let er = { desde: mesActual().slice(0, 4) + "-01", hasta: mesActual(), suc: "todas", sinIva: true, datos: null, cargando: false, error: "" };
+let gx = { año: new Date().getFullYear(), suc: null, conceptos: null, rows: null, cargando: false, error: "", editarLista: false };
 let provNuevoPendiente = null;   // { nombre, cuit } para precargar "+ Nuevo" al cargar desde ARCA
 let chartGran = null;   // null = automático según el rango de fechas
 let chartData = null;   // columnas del gráfico, para el tooltip
@@ -329,7 +329,7 @@ function render() {
   if (route === "ventas" && ventasHist.rows === null && !ventasHist.cargando && !ventasHist.error) cargarHistVentas();
   if (route === "resultados") {
     if (er.datos === null && !er.cargando && !er.error) cargarResultados();
-    if (cf.rows === null && !cf.cargando && !cf.error) cargarCostosMes();
+    if (gx.rows === null && !gx.cargando && !gx.error) cargarGastos();
   }
 }
 
@@ -1743,13 +1743,13 @@ function datosVentas() {
   };
 }
 
-/* ---------- ESTADO DE RESULTADOS (admin): ventas − compras − costos fijos ---------- */
-const nombreCostoSuc = (id) => (id ? sucursalNombre(id) : "General");
-const tagCostoSuc = (id) => (id ? sucursalTag(id) : `<span class="nc-tag manual-tag">General</span>`);
+/* ---------- ESTADO DE RESULTADOS (admin): ventas − costo de ventas − gastos operativos ---------- */
+const MES_CORTO = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+const nombreGastoSuc = (id) => (id ? sucursalNombre(id) : "General (compartido)");
 
-/** Trae ventas, compras y costos fijos de los meses elegidos (siempre todas las sucursales: los generales se reparten). */
+/** Trae ventas, compras, gastos y la lista de conceptos de los meses elegidos (siempre todas las sucursales: los generales se reparten). */
 async function cargarResultados() {
-  er.cargando = true; er.error = ""; if (route === "resultados") render();
+  er.cargando = true; er.error = ""; pintarResultados();
   const desde = er.desde + "-01", hasta = finDeMes(er.hasta);
   try {
     const [ventas, compras, costos] = await Promise.all([
@@ -1759,33 +1759,32 @@ async function cargarResultados() {
     ]);
     er.datos = { ventas, compras, costos };
   } catch (e) { er.datos = null; er.error = errorMsg(e); }
-  er.cargando = false; if (route === "resultados") render();
+  er.cargando = false; pintarResultados();
 }
 
-/** Costos fijos del mes elegido y del anterior (para copiarlos). */
-async function cargarCostosMes() {
-  cf.cargando = true; cf.error = ""; if (route === "resultados") render();
-  const ant = mesMas(cf.mes, -1);
-  const { data, error } = await sb.from("costos_fijos").select("*").in("mes", [cf.mes + "-01", ant + "-01"]).order("created_at");
-  cf.cargando = false;
-  if (error) { cf.rows = null; cf.error = errorMsg(error); }
-  else { cf.rows = data.filter((c) => c.mes.startsWith(cf.mes)); cf.previos = data.filter((c) => c.mes.startsWith(ant)); }
-  if (route === "resultados") render();
+/** Dibuja solo el resultado (sin tocar la grilla de gastos, para no perder lo que se está tipeando). */
+function pintarResultados() {
+  if (route !== "resultados") return;
+  const box = document.getElementById("erBox");
+  if (!box) { render(); return; }
+  box.innerHTML = resultadosHtml();
+  wireResultados();
 }
 
-function calcularResultados() {
-  const d = er.datos;
-  return estadoResultados({ ...d, meses: mesesEntre(er.desde, er.hasta), foco: er.suc, sucursalIds: state.sucursales.map((s) => s.id), sinIva: er.sinIva });
+const ordenConceptos = () => (gx.conceptos || []).map((c) => c.nombre);
+
+function calcularResultados(foco = er.suc) {
+  return estadoResultados({ ...er.datos, meses: mesesEntre(er.desde, er.hasta), foco, sucursalIds: state.sucursales.map((s) => s.id), sinIva: er.sinIva, orden: ordenConceptos() });
 }
 
 function pageResultados() {
   return `
-  <div class="pagehead"><h1 class="serif">Estado de resultados</h1><p>Ventas (ingresos) menos compras (costos variables: facturas en blanco y en negro) menos costos fijos, mes por mes.</p></div>
+  <div class="pagehead"><h1 class="serif">Estado de resultados</h1><p>Ventas menos el costo de ventas (compras en blanco y en negro) menos los gastos operativos, mes por mes y por sucursal.</p></div>
 
   <section class="comp-full">
   <div class="trip-h">1 · Período y sucursal</div>
   <div class="panel mb16" style="padding:16px;">
-    <div class="filters">${[["mes", "Este mes"], ["mesAnt", "Mes anterior"], ["tres", "Últimos 3 meses"], ["año", "Este año"], ["añoAnt", "Año anterior"]].map(([k, l]) => `<button data-errango="${k}">${l}</button>`).join("")}</div>
+    <div class="filters">${[["año", "Este año"], ["añoAnt", "Año anterior"], ["tres", "Últimos 3 meses"], ["mes", "Este mes"], ["mesAnt", "Mes anterior"]].map(([k, l]) => `<button data-errango="${k}">${l}</button>`).join("")}</div>
     <div class="row2">
       <div class="field" style="margin-bottom:12px;"><label>Desde (mes)</label><input type="month" id="erDesde" value="${er.desde}"></div>
       <div class="field" style="margin-bottom:12px;"><label>Hasta (mes)</label><input type="month" id="erHasta" value="${er.hasta}"></div>
@@ -1799,175 +1798,254 @@ function pageResultados() {
   </section>
 
   <section class="comp-full">
-  <div class="trip-h">2 · Resultado${er.suc === "todas" ? " · todas las sucursales" : " · " + esc(sucursalNombre(er.suc))}</div>
-  ${resultadosHtml()}
+  <div class="trip-h">2 · Resultado</div>
+  <div id="erBox">${resultadosHtml()}</div>
   </section>
 
   <section class="comp-full">
-  <div class="trip-h">3 · Costos fijos del mes</div>
-  ${costosFijosHtml()}
+  <div class="trip-h">3 · Gastos operativos</div>
+  ${gastosHtml()}
   </section>`;
 }
 
+/** Bloque resumen con el formato de la planilla: ventas, costo, margen, gastos, utilidad. */
+function bloqueResumen(R, titulo, clase) {
+  const cols = R.cols, T = R.total, varios = cols.length > 1;
+  const signed = (v) => `<span class="${v >= 0 ? "dif-pos" : "dif-neg"}">${fmtMoney(v)}</span>`;
+  const pctOr = (v) => (v == null ? "—" : pct(v));
+  const fila = (label, get, cls = "", fmt = fmtMoney) => `<tr class="${cls}"><td>${label}</td>${cols.map((c) => `<td>${fmt(get(c))}</td>`).join("")}${varios ? `<td class="tot">${fmt(get(T))}</td>` : ""}</tr>`;
+  return `<div class="er-bloque ${clase}">
+    <div class="er-bloque-h">${esc(titulo)}</div>
+    <div class="er-bloque-scroll"><table class="data-table er-tabla">
+      <thead><tr><th></th>${cols.map((c) => `<th>${esc(varios ? MES_CORTO[Number(c.mes.slice(5)) - 1] + (er.desde.slice(0, 4) !== er.hasta.slice(0, 4) ? " " + c.mes.slice(2, 4) : "") : mesLabel(c.mes))}</th>`).join("")}${varios ? "<th>Total</th>" : ""}</tr></thead>
+      <tbody>
+        ${fila("Ventas totales", (c) => c.ingresos)}
+        ${fila("Costo de ventas", (c) => c.variables)}
+        ${fila("Margen bruto", (c) => c.margen, "er-sub", signed)}
+        ${fila("% Margen bruto", (c) => c.margenPct, "er-pct", pctOr)}
+        ${fila("Total de gastos operativos", (c) => c.fijos)}
+        ${fila("Utilidad operativa (ganancia)", (c) => c.resultado, "er-final", signed)}
+        ${fila("% Utilidad operativa", (c) => c.resultadoPct, "er-pct", pctOr)}
+      </tbody>
+    </table></div>
+  </div>`;
+}
+
 function resultadosHtml() {
-  if (er.cargando) return `<div class="loading">Calculando el estado de resultados…</div>`;
-  if (er.error) return `<div class="dup-aviso err">${esc(er.error)}${/costos_fijos/.test(er.error) ? "<br>Falta ejecutar en Supabase la migración <b>014_costos_fijos.sql</b>." : ""}</div>`;
+  if (er.cargando && !er.datos) return `<div class="loading">Calculando el estado de resultados…</div>`;
+  if (er.error) return `<div class="dup-aviso err">${esc(er.error)}${/costos_fijos|gastos_conceptos/.test(er.error) ? "<br>Falta ejecutar en Supabase las migraciones <b>014_costos_fijos.sql</b> y <b>015_gastos_operativos.sql</b>." : ""}</div>`;
   if (!er.datos) return "";
   const R = calcularResultados(), T = R.total, cols = R.cols;
   const varios = cols.length > 1;
   const todas = er.suc === "todas";
   const ivaTxt = R.sinIva ? " (sin IVA)" : "";
   const sinVentas = cols.filter((c) => !c.hayVentas && c.mes <= mesActual()).map((c) => mesLabel(c.mes));
-  const sinFijos = cols.filter((c) => !c.fijos && c.mes <= mesActual()).map((c) => mesLabel(c.mes));
-  const money = (v) => fmtMoney(v);
+  const sinGastos = cols.filter((c) => !c.fijos && c.mes <= mesActual()).map((c) => mesLabel(c.mes));
   const signed = (v) => `<span class="${v >= 0 ? "dif-pos" : "dif-neg"}">${fmtMoney(v)}</span>`;
   const pctOr = (v) => (v == null ? "—" : pct(v));
-  const fila = (label, get, cls = "", fmt = money) => `<tr class="${cls}"><td>${label}</td>${cols.map((c) => `<td>${fmt(get(c))}</td>`).join("")}${varios ? `<td class="tot">${fmt(get(T))}</td>` : ""}</tr>`;
+  const fila = (label, get, cls = "", fmt = fmtMoney) => `<tr class="${cls}"><td>${label}</td>${cols.map((c) => `<td>${fmt(get(c))}</td>`).join("")}${varios ? `<td class="tot">${fmt(get(T))}</td>` : ""}</tr>`;
   const sec = (label) => `<tr class="er-sec"><td colspan="${cols.length + (varios ? 2 : 1)}">${label}</td></tr>`;
   const hayGenerales = !todas && T.generalesMes > 0;
   const meses = cols.length;
+  // bloques como en la planilla: una por sucursal (con color) y el total
+  const conMovimiento = (r) => r.total.ingresos || r.total.variables || r.total.fijos;
+  const bloques = todas
+    ? [...state.sucursales.map((s) => [calcularResultados(s.id), s.nombre, sucColor(s.id)]).filter(([r]) => conMovimiento(r)), [R, "Total de las farmacias", "er-total"]]
+    : [[R, sucursalNombre(er.suc), sucColor(er.suc)]];
 
   return `
   ${sinVentas.length ? `<div class="dup-aviso warn mb16">Sin ventas guardadas en: <b>${sinVentas.map(esc).join(", ")}</b>. Cargalas en la pestaña Ventas, si no el resultado da de menos.</div>` : ""}
-  ${sinFijos.length ? `<div class="dup-aviso warn mb16">Sin costos fijos cargados en: <b>${sinFijos.map(esc).join(", ")}</b>${todas ? "" : " para esta sucursal"}. Cargalos abajo (podés copiar los del mes anterior).</div>` : ""}
+  ${sinGastos.length ? `<div class="dup-aviso warn mb16">Sin gastos operativos cargados en: <b>${sinGastos.map(esc).join(", ")}</b>${todas ? "" : " para esta sucursal"}. Cargalos abajo en la grilla.</div>` : ""}
   <div class="kpi-row">
-    <div class="kpi"><div class="kpi-label">Ingresos${ivaTxt}</div><div class="kpi-value">${money(T.ingresos)}</div><div class="total-sub">Blanco ${money(T.vb)} · Negro ${money(T.ventasNegro)}</div></div>
-    <div class="kpi"><div class="kpi-label">Margen bruto</div><div class="kpi-value">${money(T.margen)}</div><div class="total-sub">${T.margenPct == null ? "—" : pct(T.margenPct) + " de las ventas"}</div></div>
-    <div class="kpi ${T.resultado >= 0 ? "kpi-pos" : "kpi-neg"}"><div class="kpi-label">${T.resultado >= 0 ? "Ganancia" : "Pérdida"}</div><div class="kpi-value">${money(Math.abs(T.resultado))}</div><div class="total-sub">${T.resultadoPct == null ? "—" : pct(T.resultadoPct) + " de las ventas"}</div></div>
+    <div class="kpi"><div class="kpi-label">Ventas totales${ivaTxt}</div><div class="kpi-value">${fmtMoney(T.ingresos)}</div><div class="total-sub">${todas ? "Todas las sucursales" : esc(sucursalNombre(er.suc))}</div></div>
+    <div class="kpi"><div class="kpi-label">Margen bruto</div><div class="kpi-value">${fmtMoney(T.margen)}</div><div class="total-sub">${T.margenPct == null ? "—" : pct(T.margenPct) + " de las ventas"}</div></div>
+    <div class="kpi ${T.resultado >= 0 ? "kpi-pos" : "kpi-neg"}"><div class="kpi-label">${T.resultado >= 0 ? "Ganancia" : "Pérdida"}</div><div class="kpi-value">${fmtMoney(Math.abs(T.resultado))}</div><div class="total-sub">${T.resultadoPct == null ? "—" : pct(T.resultadoPct) + " de las ventas"}</div></div>
   </div>
-  <div class="ventas-iva">Costos fijos <b>${money(T.fijos)}</b>${meses > 1 ? ` (promedio <b>${money(T.fijos / meses)}</b> por mes)` : ""}
-    ${T.equilibrio != null ? ` · Punto de equilibrio: con este margen hay que vender <b>${money(T.equilibrio)}</b>${meses > 1 ? ` en el período (<b>${money(T.equilibrio / meses)}</b> por mes)` : " en el mes"} para cubrir los costos fijos` : ""}
-    · Posición de IVA: <b>${money(Math.abs(T.saldoIva))}</b> ${T.saldoIva >= 0 ? "a pagar" : "a favor"}</div>
+  <div class="ventas-iva">Gastos operativos <b>${fmtMoney(T.fijos)}</b>${meses > 1 ? ` (promedio <b>${fmtMoney(T.fijos / meses)}</b> por mes)` : ""}
+    ${T.equilibrio != null ? ` · Punto de equilibrio: con este margen hay que vender <b>${fmtMoney(T.equilibrio)}</b>${meses > 1 ? ` en el período (<b>${fmtMoney(T.equilibrio / meses)}</b> por mes)` : " en el mes"} para cubrir los gastos` : ""}
+    · Posición de IVA: <b>${fmtMoney(Math.abs(T.saldoIva))}</b> ${T.saldoIva >= 0 ? "a pagar" : "a favor"}</div>
 
-  <div class="hoy-wrap mb16"><table class="data-table er-tabla">
+  ${bloques.map(([r, titulo, clase]) => bloqueResumen(r, titulo, clase)).join("")}
+
+  <details class="chart-table mb16"><summary>Ver el detalle${todas ? " (todas las sucursales)" : ""}: blanco / negro y cada gasto</summary>
+  <div class="hoy-wrap" style="margin-top:8px;"><table class="data-table er-tabla">
     <thead><tr><th>Concepto</th>${cols.map((c) => `<th>${esc(varios ? mesLabel(c.mes, true) : mesLabel(c.mes))}</th>`).join("")}${varios ? "<th>Total</th>" : ""}</tr></thead>
     <tbody>
-      ${sec("Ingresos (ventas)")}
+      ${sec("Ventas")}
       ${fila(`Ventas en blanco${ivaTxt}`, (c) => c.vb, "er-det")}
       ${fila("Ventas en negro", (c) => c.ventasNegro, "er-det")}
-      ${fila("Total ingresos", (c) => c.ingresos, "er-sub")}
-      ${sec("Costos variables (compras de mercadería)")}
+      ${fila("Ventas totales", (c) => c.ingresos, "er-sub")}
+      ${sec("Costo de ventas (compras de mercadería)")}
       ${fila(`Compras facturadas${ivaTxt}`, (c) => c.cb, "er-det")}
       ${fila("Compras no facturadas", (c) => c.comprasNegro, "er-det")}
-      ${fila("Total costos variables", (c) => c.variables, "er-sub")}
+      ${fila("Costo de ventas", (c) => c.variables, "er-sub")}
       ${fila("Margen bruto", (c) => c.margen, "er-margen", signed)}
-      ${fila("% sobre ventas", (c) => c.margenPct, "er-pct", pctOr)}
-      ${sec("Costos fijos")}
+      ${fila("% Margen bruto", (c) => c.margenPct, "er-pct", pctOr)}
+      ${sec("Gastos operativos")}
       ${R.categorias.map((cat) => fila(esc(cat), (c) => c.fijosCat[cat] || 0, "er-det")).join("")}
-      ${hayGenerales ? fila(`Parte de costos generales <small>(según ventas${T.parte != null ? ", " + pct(T.parte * 100) : ""})</small>`, (c) => c.fijosGenerales, "er-det") : ""}
-      ${!R.categorias.length && !hayGenerales ? `<tr class="er-det"><td colspan="${cols.length + (varios ? 2 : 1)}" style="color:var(--muted);">Sin costos fijos cargados</td></tr>` : ""}
-      ${fila("Total costos fijos", (c) => c.fijos, "er-sub")}
-      ${fila(`Resultado${varios ? "" : " del mes"}`, (c) => c.resultado, "er-final", signed)}
-      ${fila("% sobre ventas", (c) => c.resultadoPct, "er-pct", pctOr)}
+      ${hayGenerales ? fila(`Parte de gastos generales <small>(según ventas${T.parte != null ? ", " + pct(T.parte * 100) : ""})</small>`, (c) => c.fijosGenerales, "er-det") : ""}
+      ${!R.categorias.length && !hayGenerales ? `<tr class="er-det"><td colspan="${cols.length + (varios ? 2 : 1)}" style="color:var(--muted);">Sin gastos cargados</td></tr>` : ""}
+      ${fila("Total de gastos operativos", (c) => c.fijos, "er-sub")}
+      ${fila("Utilidad operativa (ganancia)", (c) => c.resultado, "er-final", signed)}
+      ${fila("% Utilidad operativa", (c) => c.resultadoPct, "er-pct", pctOr)}
     </tbody>
-  </table></div>
+  </table></div></details>
   <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
     <button class="btn small" id="btnErPdf">📄 Estado de resultados PDF</button>
     <button class="btn secondary small" id="btnErXls">📊 Excel</button>
   </div>
-  <div class="hint">Las compras del mes se toman como costo de la mercadería vendida: si ese mes se compró mucho para stock (o se vendió stock viejo), el resultado del mes se mueve aunque el negocio no haya cambiado. Mirá varios meses juntos para ver la tendencia.${todas ? "" : " Los costos generales (los que no son de una sucursal) se reparten según lo que vendió cada sucursal ese mes."}</div>`;
+  <div class="hint">Las compras del mes se toman como costo de ventas: si ese mes se compró mucho para stock (o se vendió stock viejo), el resultado del mes se mueve aunque el negocio no haya cambiado. Mirá varios meses juntos para ver la tendencia. Los gastos "General" se reparten entre las sucursales según lo que vendió cada una ese mes.</div>`;
 }
 
 function datosResultados() {
-  return { R: calcularResultados(), desde: er.desde, hasta: er.hasta, foco: er.suc === "todas" ? "Todas las sucursales" : sucursalNombre(er.suc), mesLabel };
+  const todas = er.suc === "todas";
+  const bloques = todas
+    ? [...state.sucursales.map((s) => ({ nombre: s.nombre, R: calcularResultados(s.id) })).filter((b) => b.R.total.ingresos || b.R.total.variables || b.R.total.fijos), { nombre: "Total de las farmacias", R: calcularResultados() }]
+    : [{ nombre: sucursalNombre(er.suc), R: calcularResultados() }];
+  return { R: calcularResultados(), bloques, desde: er.desde, hasta: er.hasta, foco: todas ? "Todas las sucursales" : sucursalNombre(er.suc), mesLabel };
 }
 
-function costosFijosHtml() {
-  const editando = !!cf.id;
-  const rows = cf.rows || [];
-  const orden = (c) => (c.sucursal_id ? "1" + sucursalNombre(c.sucursal_id) : "0") + "|" + c.categoria;
-  const lista = [...rows].sort((a, b) => orden(a).localeCompare(orden(b)));
-  const total = rows.reduce((a, c) => a + (Number(c.monto) || 0), 0);
-  const porSuc = [null, ...state.sucursales.map((s) => s.id)].map((id) => [id, rows.filter((c) => (c.sucursal_id || null) === id).reduce((a, c) => a + (Number(c.monto) || 0), 0)]).filter(([, v]) => v);
-  const cats = [...new Set([...CATEGORIAS_FIJOS, ...rows.map((c) => c.categoria), ...cf.previos.map((c) => c.categoria)])];
+/* --- Grilla de gastos: conceptos × meses de un año, por sucursal (o general) --- */
+async function cargarGastos() {
+  if (gx.suc === null) gx.suc = state.sucursales[0]?.id || "";   // arranca en la primera sucursal
+  gx.cargando = true; gx.error = ""; if (route === "resultados") render();
+  try {
+    // el año entero y el diciembre anterior (para "copiar el mes anterior" en enero)
+    const [conceptos, rows] = await Promise.all([
+      fetchAll(() => sb.from("gastos_conceptos").select("*").order("orden").order("nombre")),
+      fetchAll(() => sb.from("costos_fijos").select("id, mes, sucursal_id, categoria, monto").gte("mes", `${gx.año - 1}-12-01`).lte("mes", `${gx.año}-12-01`)),
+    ]);
+    gx.conceptos = conceptos; gx.rows = rows;
+  } catch (e) { gx.rows = null; gx.error = errorMsg(e); }
+  gx.cargando = false;
+  if (route === "resultados") { render(); if (er.datos) pintarResultados(); }
+}
+
+const gxMeses = () => Array.from({ length: 12 }, (_, i) => `${gx.año}-${String(i + 1).padStart(2, "0")}`);
+/** Importe de un concepto en un mes, para la sucursal elegida en la grilla. */
+function gxValor(cat, mes) {
+  const suc = gx.suc || null;
+  return (gx.rows || []).filter((r) => r.categoria === cat && r.mes.startsWith(mes) && (r.sucursal_id || null) === suc).reduce((a, r) => a + (Number(r.monto) || 0), 0);
+}
+
+function gastosHtml() {
+  if (gx.cargando && !gx.rows) return `<div class="loading">Cargando gastos…</div>`;
+  if (gx.error) return `<div class="dup-aviso err">${esc(gx.error)}${/costos_fijos|gastos_conceptos|guardar_gasto/.test(gx.error) ? "<br>Falta ejecutar en Supabase las migraciones <b>014_costos_fijos.sql</b> y <b>015_gastos_operativos.sql</b>." : ""}</div>`;
+  if (!gx.rows) return "";
+  const meses = gxMeses();
+  const activos = gx.conceptos.filter((c) => c.activo);
+  // los quitados siguen en la grilla si tienen importes ese año
+  const quitadosConDatos = gx.conceptos.filter((c) => !c.activo && meses.some((m) => gxValor(c.nombre, m)));
+  const filas = [...activos, ...quitadosConDatos];
+  const totalMes = (m) => filas.reduce((a, c) => a + gxValor(c.nombre, m), 0);
+  const quitados = gx.conceptos.filter((c) => !c.activo);
   return `<div class="panel mb16" style="padding:16px;">
-    <div class="field" style="max-width:220px;"><label>Mes</label><input type="month" id="cfMes" value="${cf.mes}"></div>
-    <div class="manual-grid">
-      <div class="field"><label>Sucursal</label><select id="cfSuc">
-        <option value="" ${!cf.sucursal ? "selected" : ""}>General (de todas)</option>
-        ${state.sucursales.map((s) => `<option value="${s.id}" ${cf.sucursal === s.id ? "selected" : ""}>${esc(s.nombre)}</option>`).join("")}
-      </select></div>
-      <div class="field"><label>Categoría</label><select id="cfCat">${cats.map((c) => `<option ${cf.categoria === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
-      <div class="field"><label>Detalle (opcional)</label><input type="text" id="cfConcepto" value="${esc(cf.concepto)}" placeholder="Ej.: Edenor, contador…" autocomplete="off"></div>
-      <div class="field"><label>Monto</label><input type="text" inputmode="decimal" autocomplete="off" class="monto" id="cfMonto" value="${esc(cf.monto)}" placeholder="0"></div>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:12px;">
+      <div class="badge-group gx-año" style="margin:0;">
+        <button data-gxaño="${gx.año - 1}" aria-label="Año anterior">‹</button><button class="active" disabled>${gx.año}</button><button data-gxaño="${gx.año + 1}" aria-label="Año siguiente">›</button>
+      </div>
+      <div class="filters" style="margin:0;">
+        ${state.sucursales.map((s) => `<button data-gxsuc="${s.id}" class="${gx.suc === s.id ? "active" : ""}">${esc(s.nombre)}</button>`).join("")}
+        <button data-gxsuc="" class="${!gx.suc ? "active" : ""}" title="Gastos compartidos: se reparten entre las sucursales según lo que vendió cada una">General (compartido)</button>
+      </div>
     </div>
-    <div style="display:flex; gap:8px; flex-wrap:wrap;">
-      <button class="btn small" id="btnCfGuardar" ${cf.guardando ? "disabled" : ""}>${cf.guardando ? "Guardando…" : editando ? "💾 Guardar cambios" : "＋ Agregar costo"}</button>
-      ${editando ? `<button class="btn secondary small" id="btnCfCancelar">Cancelar</button>` : ""}
-    </div>
-    <div class="hint" style="margin:10px 0 0;">"General" es un costo compartido (por ejemplo el contador de las dos farmacias): en el resultado de cada sucursal se reparte según lo que vendió cada una.</div>
-  </div>
-  ${cf.cargando ? `<div class="loading">Cargando costos fijos…</div>`
-    : cf.error ? `<div class="dup-aviso err">${esc(cf.error)}${/costos_fijos/.test(cf.error) ? "<br>Falta ejecutar en Supabase la migración <b>014_costos_fijos.sql</b>." : ""}</div>`
-    : !cf.rows ? ""
-    : !rows.length ? `<div class="empty-state panel">No hay costos fijos cargados en ${esc(mesLabel(cf.mes))}.
-        ${cf.previos.length ? `<div style="margin-top:12px;"><button class="btn small" id="btnCfCopiar">📋 Copiar los ${cf.previos.length} costos de ${esc(mesLabel(mesMas(cf.mes, -1)))}</button><div class="hint" style="margin:8px 0 0;">Después corregí los que cambiaron (sueldos, luz…).</div></div>` : ""}</div>`
-    : `<div class="hoy-wrap mb16"><table class="data-table">
-      <thead><tr><th>Sucursal</th><th>Categoría</th><th>Detalle</th><th>Monto</th><th></th></tr></thead>
-      <tbody>${lista.map((c) => `<tr${cf.id === c.id ? ` class="fila-foco"` : ""}>
-        <td>${tagCostoSuc(c.sucursal_id)}</td><td style="text-align:left;">${esc(c.categoria)}</td><td style="text-align:left; color:var(--muted);">${esc(c.concepto || "")}</td>
-        <td class="tot">${fmtMoney(c.monto)}</td>
-        <td><div class="hoy-acc"><button class="btn secondary small ico" data-cfedit="${c.id}" title="Corregir" aria-label="Corregir">✎</button><button class="btn secondary small ico" data-cfdel="${c.id}" title="Eliminar" aria-label="Eliminar">🗑</button></div></td>
-      </tr>`).join("")}
-      <tr class="ventas-tot"><td>Total ${esc(mesLabel(cf.mes))}</td><td></td><td></td><td class="tot">${fmtMoney(total)}</td><td></td></tr>
+    <div class="hint" style="margin-top:0;">Escribí el importe en la celda y pasá a la siguiente (Tab o Enter): se guarda solo. Para borrar un importe, dejá la celda vacía.</div>
+    <div class="gx-wrap"><table class="gx-tabla">
+      <thead><tr><th class="gx-con">${esc(nombreGastoSuc(gx.suc || null))}</th>${meses.map((m, i) => {
+        const ant = mesMas(m, -1);
+        const puedeCopiar = !totalMes(m) && filas.some((c) => gxValor(c.nombre, ant)) && m <= mesActual();
+        return `<th>${MES_CORTO[i]}${puedeCopiar ? `<button class="gx-copiar" data-gxcopiar="${m}" title="Copiar los importes de ${esc(mesLabel(ant))}">⇐ copiar</button>` : ""}</th>`;
+      }).join("")}<th>Total</th></tr></thead>
+      <tbody>
+        <tr class="gx-total"><td class="gx-con">Total de gastos operativos</td>${meses.map((m) => `<td data-gxtot="${m}">${totalMes(m) ? fmtMoney(totalMes(m)) : ""}</td>`).join("")}<td data-gxtot="año">${fmtMoney(meses.reduce((a, m) => a + totalMes(m), 0))}</td></tr>
+        ${filas.map((c, f) => `<tr${c.activo ? "" : ` class="gx-quitado" title="Concepto quitado"`}><td class="gx-con">${esc(c.nombre)}</td>
+          ${meses.map((m, i) => { const v = gxValor(c.nombre, m); return `<td><input type="text" inputmode="decimal" autocomplete="off" class="monto gx-celda" data-gxcat="${esc(c.nombre)}" data-gxmes="${m}" data-f="${f}" data-c="${i}" value="${v ? esc(montoTexto(v)) : ""}" aria-label="${esc(c.nombre)} ${esc(mesLabel(m))}"></td>`; }).join("")}
+          <td class="gx-fila-tot" data-gxfila="${esc(c.nombre)}">${fmtMoney(meses.reduce((a, m) => a + gxValor(c.nombre, m), 0))}</td></tr>`).join("")}
       </tbody>
     </table></div>
-    ${porSuc.length > 1 ? `<div class="ventas-iva">${porSuc.map(([id, v]) => `${esc(nombreCostoSuc(id))} <b>${fmtMoney(v)}</b>`).join(" · ")}</div>` : ""}`}`;
+  </div>
+
+  <details class="chart-table mb16"${gx.editarLista ? " open" : ""} id="gxLista"><summary>Editar la lista de gastos (${activos.length})</summary>
+  <div class="panel" style="padding:6px 18px; margin-top:8px;">
+    <table class="data-table">${activos.map((c, i) => `<tr>
+      <td>${esc(c.nombre)}</td>
+      <td style="white-space:nowrap;">
+        <button class="linkbtn" data-gxmover="${c.id}" data-dir="-1" ${i === 0 ? "disabled" : ""} title="Subir">↑</button>
+        <button class="linkbtn" data-gxmover="${c.id}" data-dir="1" ${i === activos.length - 1 ? "disabled" : ""} title="Bajar">↓</button>
+        <button class="linkbtn" data-gxren="${c.id}">Renombrar</button>
+        <button class="linkbtn" data-gxtoggle="${c.id}">Quitar</button>
+      </td></tr>`).join("")}</table>
+  </div>
+  <div class="provrow" style="margin-top:10px;">
+    <input type="text" id="gxNuevo" placeholder="Ej: Seguro del local" style="flex:1; padding:10px 12px; border:1px solid var(--line); border-radius:4px; background:var(--panel); color:var(--ink);">
+    <button id="btnGxAdd" type="button">+ Agregar gasto</button>
+  </div>
+  ${quitados.length ? `<div class="hint">Quitados (los importes ya cargados se conservan): ${quitados.map((c) => `${esc(c.nombre)} <button class="linkbtn" data-gxtoggle="${c.id}">Reactivar</button>`).join(" · ")}</div>` : ""}
+  </details>`;
 }
 
-function leerFormCosto() {
-  cf.sucursal = document.getElementById("cfSuc")?.value ?? cf.sucursal;
-  cf.categoria = document.getElementById("cfCat")?.value ?? cf.categoria;
-  cf.concepto = document.getElementById("cfConcepto")?.value ?? cf.concepto;
-  cf.monto = document.getElementById("cfMonto")?.value ?? cf.monto;
+/** Recalcula los totales de la grilla sin volver a dibujarla (para no perder el foco). */
+function actualizarTotalesGx() {
+  const meses = gxMeses();
+  const cats = [...document.querySelectorAll("[data-gxfila]")].map((td) => td.dataset.gxfila);
+  let año = 0;
+  for (const m of meses) {
+    const t = cats.reduce((a, c) => a + gxValor(c, m), 0); año += t;
+    const td = document.querySelector(`[data-gxtot="${m}"]`); if (td) td.textContent = t ? fmtMoney(t) : "";
+  }
+  const ta = document.querySelector(`[data-gxtot="año"]`); if (ta) ta.textContent = fmtMoney(año);
+  document.querySelectorAll("[data-gxfila]").forEach((td) => { td.textContent = fmtMoney(meses.reduce((a, m) => a + gxValor(td.dataset.gxfila, m), 0)); });
 }
 
-/** Después de cambiar costos: recargar la lista y, si el mes está en el período, el estado de resultados. */
-function costosCambiaron() {
-  cf.rows = null; cargarCostosMes();
-  if (cf.mes >= er.desde && cf.mes <= er.hasta) { er.datos = null; cargarResultados(); }
+let gxRecalc = null;
+/** Después de cambiar gastos, el resultado se vuelve a calcular (un momento después, por si se siguen cargando). */
+function gastosCambiaron() {
+  clearTimeout(gxRecalc);
+  gxRecalc = setTimeout(() => cargarResultados(), 900);
 }
 
-async function guardarCosto() {
-  leerFormCosto();
-  const monto = parseMonto(cf.monto);
-  if (isNaN(monto) || monto <= 0) { toast("Ingresá el monto."); document.getElementById("cfMonto")?.focus(); return; }
-  if (!cf.categoria) { toast("Elegí la categoría."); return; }
-  const fila = { mes: cf.mes + "-01", sucursal_id: cf.sucursal || null, categoria: cf.categoria, concepto: cf.concepto.trim() || null, monto };
-  cf.guardando = true; render();
-  const { error } = cf.id ? await sb.from("costos_fijos").update(fila).eq("id", cf.id) : await sb.from("costos_fijos").insert(fila);
-  cf.guardando = false;
-  if (error) { toast(errorMsg(error)); render(); return; }
-  toast(cf.id ? "Costo corregido." : `Costo agregado en ${mesLabel(cf.mes)}.`);
-  cf.id = null; cf.concepto = ""; cf.monto = "";
-  costosCambiaron();
+async function guardarCeldaGasto(el) {
+  const cat = el.dataset.gxcat, mes = el.dataset.gxmes, suc = gx.suc || null;
+  const monto = parseMonto(el.value);
+  if (isNaN(monto) || monto < 0) { toast("Revisá el importe."); el.classList.add("gx-error"); return; }
+  if (Math.abs(monto - gxValor(cat, mes)) < 0.005) { el.classList.remove("gx-error"); return; }
+  el.classList.add("gx-guardando"); el.classList.remove("gx-error");
+  const { error } = await sb.rpc("guardar_gasto", { p_mes: mes + "-01", p_sucursal: suc, p_categoria: cat, p_monto: monto });
+  el.classList.remove("gx-guardando");
+  if (error) { el.classList.add("gx-error"); toast(errorMsg(error)); return; }
+  gx.rows = gx.rows.filter((r) => !(r.categoria === cat && r.mes.startsWith(mes) && (r.sucursal_id || null) === suc));
+  if (monto > 0) gx.rows.push({ mes: mes + "-01", sucursal_id: suc, categoria: cat, monto });
+  el.classList.add("gx-ok"); setTimeout(() => el.classList.remove("gx-ok"), 900);
+  actualizarTotalesGx();
+  gastosCambiaron();
 }
 
-function corregirCosto(id) {
-  const c = (cf.rows || []).find((x) => x.id === id);
-  if (!c) return;
-  Object.assign(cf, { id, sucursal: c.sucursal_id || "", categoria: c.categoria, concepto: c.concepto || "", monto: montoTexto(c.monto) });
-  render();
-  document.getElementById("cfMonto")?.focus();
-}
-
-async function eliminarCosto(id) {
-  const c = (cf.rows || []).find((x) => x.id === id);
-  if (!c || !(await dialogo(`¿Eliminar ${c.categoria}${c.concepto ? " (" + c.concepto + ")" : ""} de ${nombreCostoSuc(c.sucursal_id)} en ${mesLabel(cf.mes)}?`, { aceptar: "Eliminar", peligro: true }))) return;
-  const { error } = await sb.from("costos_fijos").delete().eq("id", id);
-  if (error) { toast(errorMsg(error)); return; }
-  if (cf.id === id) { cf.id = null; cf.concepto = ""; cf.monto = ""; }
-  toast("Costo eliminado.");
-  costosCambiaron();
-}
-
-async function copiarCostosMesAnterior() {
-  const filas = cf.previos.map((c) => ({ mes: cf.mes + "-01", sucursal_id: c.sucursal_id, categoria: c.categoria, concepto: c.concepto, monto: c.monto }));
+async function copiarGastosMes(mes) {
+  const ant = mesMas(mes, -1), suc = gx.suc || null;
+  const filas = (gx.rows || []).filter((r) => r.mes.startsWith(ant) && (r.sucursal_id || null) === suc);
   if (!filas.length) return;
-  const { error } = await sb.from("costos_fijos").insert(filas);
+  const nuevas = filas.map((r) => ({ mes: mes + "-01", sucursal_id: suc, categoria: r.categoria, monto: r.monto }));
+  const { error } = await sb.from("costos_fijos").insert(nuevas);
   if (error) { toast(errorMsg(error)); return; }
-  toast(`${filas.length} costos copiados a ${mesLabel(cf.mes)}.`);
-  costosCambiaron();
+  gx.rows.push(...nuevas);
+  toast(`Copiados ${nuevas.length} gastos de ${mesLabel(ant)} a ${mesLabel(mes)}. Corregí los que cambiaron.`);
+  render(); gastosCambiaron();
+}
+
+async function opConcepto(op, okMsg) {
+  const { error } = await op;
+  if (error) { toast(error.code === "23505" ? "Ya existe un gasto con ese nombre." : errorMsg(error)); return false; }
+  if (okMsg) toast(okMsg);
+  gx.editarLista = true;
+  await cargarGastos();
+  return true;
+}
+
+function wireResultados() {
+  on("btnErPdf", "click", () => generarResultadosPDF(datosResultados()));
+  on("btnErXls", "click", async () => {
+    try { await generarResultadosExcel(datosResultados()); } catch (e) { toast("No se pudo generar el Excel."); console.error(e); }
+  });
 }
 
 function pageProveedores() {
@@ -2243,27 +2321,61 @@ function wirePage() {
     on("erDesde", "change", periodo);
     on("erHasta", "change", periodo);
     document.querySelectorAll("[data-errango]").forEach((b) => b.addEventListener("click", () => {
-      const m = mesActual(), y = m.slice(0, 4);
+      const m = mesActual(), y = Number(m.slice(0, 4));
       [er.desde, er.hasta] = { mes: [m, m], mesAnt: [mesMas(m, -1), mesMas(m, -1)], tres: [mesMas(m, -2), m],
         año: [y + "-01", m], añoAnt: [(y - 1) + "-01", (y - 1) + "-12"] }[b.dataset.errango];
       recargar();
     }));
     // cambiar sucursal o IVA no necesita volver a traer datos
     document.querySelectorAll("[data-ersuc]").forEach((b) => b.addEventListener("click", () => { er.suc = b.dataset.ersuc; render(); }));
-    on("erSinIva", "change", (e) => { er.sinIva = e.target.checked; render(); });
-    on("btnErPdf", "click", () => generarResultadosPDF(datosResultados()));
-    on("btnErXls", "click", async () => {
-      try { await generarResultadosExcel(datosResultados()); } catch (e) { toast("No se pudo generar el Excel."); console.error(e); }
+    on("erSinIva", "change", (e) => { er.sinIva = e.target.checked; pintarResultados(); });
+    wireResultados();
+
+    // Grilla de gastos
+    document.querySelectorAll("[data-gxaño]").forEach((b) => b.addEventListener("click", () => { gx.año = Number(b.dataset.gxaño); gx.rows = null; cargarGastos(); }));
+    document.querySelectorAll("[data-gxsuc]").forEach((b) => b.addEventListener("click", () => { gx.suc = b.dataset.gxsuc; render(); }));
+    document.querySelectorAll("input.gx-celda").forEach((el) => {
+      wireMonto(el);
+      el.addEventListener("change", () => guardarCeldaGasto(el));
+      el.addEventListener("focus", () => el.select());
+      // Enter: misma columna, fila de abajo (como en la planilla)
+      el.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        const sig = document.querySelector(`input.gx-celda[data-c="${el.dataset.c}"][data-f="${Number(el.dataset.f) + (e.shiftKey ? -1 : 1)}"]`);
+        if (sig) sig.focus(); else el.blur();
+      });
     });
-    document.querySelectorAll("input.monto").forEach(wireMonto);
-    // que lo tipeado no se pierda si otra parte de la pantalla se vuelve a dibujar
-    for (const id of ["cfSuc", "cfCat", "cfConcepto", "cfMonto"]) { on(id, "input", leerFormCosto); on(id, "change", leerFormCosto); }
-    on("cfMes", "change", (e) => { if (!e.target.value) return; leerFormCosto(); cf.mes = e.target.value; cf.id = null; cf.rows = null; cargarCostosMes(); });
-    on("btnCfGuardar", "click", guardarCosto);
-    on("btnCfCancelar", "click", () => { cf.id = null; cf.concepto = ""; cf.monto = ""; render(); });
-    on("btnCfCopiar", "click", copiarCostosMesAnterior);
-    document.querySelectorAll("[data-cfedit]").forEach((b) => b.addEventListener("click", () => corregirCosto(b.dataset.cfedit)));
-    document.querySelectorAll("[data-cfdel]").forEach((b) => b.addEventListener("click", () => eliminarCosto(b.dataset.cfdel)));
+    document.querySelectorAll("[data-gxcopiar]").forEach((b) => b.addEventListener("click", () => copiarGastosMes(b.dataset.gxcopiar)));
+    on("gxLista", "toggle", (e) => { gx.editarLista = e.target.open; });
+    const agregar = async () => {
+      const inp = document.getElementById("gxNuevo"), nombre = inp.value.trim();
+      if (!nombre) { toast("Escribí el nombre del gasto."); inp.focus(); return; }
+      const orden = Math.max(0, ...gx.conceptos.map((c) => c.orden)) + 1;
+      if (await opConcepto(sb.from("gastos_conceptos").insert({ nombre, orden }), `"${nombre}" agregado a la lista.`)) document.getElementById("gxNuevo")?.focus();
+    };
+    on("btnGxAdd", "click", agregar);
+    on("gxNuevo", "keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); agregar(); } });
+    document.querySelectorAll("[data-gxren]").forEach((b) => b.addEventListener("click", async () => {
+      const c = gx.conceptos.find((x) => x.id === b.dataset.gxren);
+      const nombre = (await dialogo(`Nuevo nombre para "${c.nombre}" (los importes ya cargados pasan al nuevo nombre):`, { aceptar: "Renombrar", valor: c.nombre }))?.trim();
+      if (!nombre || nombre === c.nombre) return;
+      if (await opConcepto(sb.from("gastos_conceptos").update({ nombre }).eq("id", c.id), "Gasto renombrado.")) gastosCambiaron();
+    }));
+    document.querySelectorAll("[data-gxtoggle]").forEach((b) => b.addEventListener("click", () => {
+      const c = gx.conceptos.find((x) => x.id === b.dataset.gxtoggle);
+      opConcepto(sb.from("gastos_conceptos").update({ activo: !c.activo }).eq("id", c.id), c.activo ? `"${c.nombre}" quitado de la lista.` : `"${c.nombre}" reactivado.`);
+    }));
+    document.querySelectorAll("[data-gxmover]").forEach((b) => b.addEventListener("click", async () => {
+      const act = gx.conceptos.filter((c) => c.activo), i = act.findIndex((c) => c.id === b.dataset.gxmover), j = i + Number(b.dataset.dir);
+      if (j < 0 || j >= act.length) return;
+      [act[i], act[j]] = [act[j], act[i]];
+      // se renumera toda la lista para que el orden quede firme
+      const cambios = act.map((c, k) => ({ id: c.id, orden: k + 1 })).filter((x) => gx.conceptos.find((c) => c.id === x.id).orden !== x.orden);
+      const res = await Promise.all(cambios.map((x) => sb.from("gastos_conceptos").update({ orden: x.orden }).eq("id", x.id)));
+      await opConcepto(Promise.resolve(res.find((r) => r.error) || {}));
+      if (er.datos) pintarResultados();
+    }));
   }
 
   if (route === "arca") {
@@ -2305,7 +2417,7 @@ window.addEventListener("hashchange", () => {
   syncDraft();
   route = location.hash.replace("#", "") || "subir";
   if (route === "listado") listLoaded = false; // siempre datos frescos al entrar
-  if (route === "resultados") { er.datos = null; er.error = ""; cf.rows = null; cf.error = ""; }
+  if (route === "resultados") { er.datos = null; er.error = ""; gx.rows = null; gx.error = ""; }
   render();
 });
 
