@@ -413,3 +413,26 @@ header.top{padding:2px 0 8px;}
 .gx-año button{padding:6px 12px;}
 .er-bloque .er-tabla td:first-child, .er-bloque .er-tabla th:first-child{position:sticky; left:0; background:var(--panel); z-index:1; padding-right:12px;}
 .er-bloque .er-tabla tr.er-final td:first-child{background:color-mix(in srgb, var(--accent) 10%, var(--panel));}
+/* Gastos operativos: lista fija con el importe del mes */
+.gl-mes{min-width:150px; text-transform:capitalize;}
+.gl-total{display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 14px; border-radius:6px; background:var(--facturado-bg); color:var(--facturado); font-weight:700; margin-bottom:12px;}
+.gl-total b{font-family:'Fraunces',serif; font-size:19px;}
+.gl-copiar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px;}
+.gl-lista{border:1px solid var(--line); border-radius:6px; overflow:hidden;}
+.gl-row{display:grid; grid-template-columns:minmax(0,1.4fr) minmax(120px,1fr) minmax(0,1fr) auto; gap:10px; align-items:center; padding:6px 12px; border-bottom:1px solid var(--line); background:var(--panel);}
+.gl-row:last-child{border-bottom:none;}
+.gl-head{background:var(--paper); font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); font-weight:700; padding:8px 12px;}
+.gl-nombre{font-weight:600;}
+.gl-row .gx-celda{width:100%; border:1px solid var(--line); border-radius:4px; background:var(--paper); padding:8px 10px; font-size:14px;}
+.gl-ant{text-align:right; font-size:12.5px; color:var(--muted);}
+.gl-head span:nth-child(3){text-align:right;}
+.gl-acc{display:flex; gap:6px; white-space:nowrap;}
+.gl-acc .linkbtn{padding:2px 4px; text-decoration:none; color:var(--muted);}
+.gl-acc .linkbtn:hover{color:var(--ink);}
+.gl-add{margin-top:12px;}
+@media (max-width:560px){
+  .gl-row{grid-template-columns:minmax(0,1fr) 120px; row-gap:4px;}
+  .gl-ant{grid-column:1; text-align:left;} .gl-ant::before{content:"Mes ant.: ";}
+  .gl-acc{grid-column:2; justify-content:flex-end;}
+  .gl-head span:nth-child(n+3){display:none;}
+}
