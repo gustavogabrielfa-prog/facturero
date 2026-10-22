@@ -1947,7 +1947,7 @@ async function cargarGastos() {
     // el año entero y el diciembre anterior (para "copiar el mes anterior" en enero)
     const [conceptos, rows] = await Promise.all([
       fetchAll(() => sb.from("gastos_conceptos").select("*").order("orden").order("nombre")),
-      fetchAll(() => sb.from("costos_fijos").select("id, mes, sucursal_id, categoria, monto").gte("mes", `${gx.año - 1}-12-01`).lte("mes", `${gx.año}-12-01`)),
+      fetchAll(() => sb.from("costos_fijos").select("id, mes, sucursal_id, categoria, monto, created_at").gte("mes", `${gx.año - 1}-12-01`).lte("mes", `${gx.año}-12-01`)),
     ]);
     gx.conceptos = conceptos; gx.rows = rows;
   } catch (e) { gx.rows = null; gx.error = errorMsg(e); }
@@ -1972,6 +1972,16 @@ function difGasto(v, v0) {
   if (Math.abs(d) < 0.005) return `<span class="gl-dif igual">= igual</span>`;
   return `<span class="gl-dif ${d > 0 ? "sube" : "baja"}">${d > 0 ? "▲" : "▼"} ${fmtMoney(Math.abs(d))} (${d > 0 ? "+" : "−"}${pct(Math.abs(d / v0) * 100)})</span>`;
 }
+
+/** Cuándo se cargó (o se corrigió por última vez) un importe del mes, para la sucursal elegida. */
+function gxCargado(cat, m) {
+  const r = (gx.rows || []).find((x) => x.categoria === cat && x.mes.startsWith(m) && (x.sucursal_id || null) === (gx.suc || null));
+  return r?.created_at || null;
+}
+const textoCarga = (cat, m) => {
+  const iso = gxCargado(cat, m);
+  return iso ? "Cargado el " + new Date(iso).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).replace(",", "") : "";
+};
 
 function gastosHtml() {
   if (gx.cargando && !gx.rows) return `<div class="loading">Cargando gastos…</div>`;
@@ -2024,7 +2034,7 @@ function gastosHtml() {
       <div class="gl-row gl-head"><span>Gasto</span><span>Importe de ${esc(mesLabel(m))}</span><span>Mes anterior</span><span></span></div>
       ${filas.map((c, f) => { const v0 = gxValor(c.nombre, ant); return `<div class="gl-row${c.activo ? "" : " gx-quitado"}">
         <span class="gl-nombre">${esc(c.nombre)}</span>
-        <span>${celda(c, m, f, 0)}</span>
+        <span class="gl-celda"><span class="gl-inp">${celda(c, m, f, 0)}</span><small class="gl-fecha" data-gxfecha="${esc(c.nombre)}">${textoCarga(c.nombre, m)}</small></span>
         <span class="gl-ant">${v0 ? fmtMoney(v0) : "—"}<small data-gxdif="${esc(c.nombre)}" data-ant="${v0}">${difGasto(gxValor(c.nombre, m), v0)}</small></span>
         <span class="gl-acc">${c.activo && esAdmin() ? `<button class="linkbtn" data-gxmover="${c.id}" data-dir="-1" title="Subir" aria-label="Subir">↑</button><button class="linkbtn" data-gxmover="${c.id}" data-dir="1" title="Bajar" aria-label="Bajar">↓</button><button class="linkbtn" data-gxren="${c.id}" title="Renombrar" aria-label="Renombrar">✎</button><button class="linkbtn" data-gxtoggle="${c.id}" title="Quitar de la lista" aria-label="Quitar de la lista">✕</button>` : ""}</span>
       </div>`; }).join("")}
@@ -2099,7 +2109,8 @@ async function guardarCeldaGasto(el) {
   el.classList.remove("gx-guardando");
   if (error) { el.classList.add("gx-error"); toast(errorMsg(error)); return; }
   gx.rows = gx.rows.filter((r) => !(r.categoria === cat && r.mes.startsWith(mes) && (r.sucursal_id || null) === suc));
-  if (monto > 0) gx.rows.push({ mes: mes + "-01", sucursal_id: suc, categoria: cat, monto });
+  if (monto > 0) gx.rows.push({ mes: mes + "-01", sucursal_id: suc, categoria: cat, monto, created_at: new Date().toISOString() });
+  const fe = document.querySelector(`[data-gxfecha="${CSS.escape(cat)}"]`); if (fe) fe.textContent = textoCarga(cat, mes);
   el.classList.add("gx-ok"); setTimeout(() => el.classList.remove("gx-ok"), 900);
   if (esGerente() && monto > 0) { el.readOnly = true; el.classList.add("gx-bloq"); el.title = "Ya cargado. Para cambiarlo, pedíselo al administrador."; }
   actualizarTotalesGx();
@@ -2113,7 +2124,7 @@ async function copiarGastosMes(mes) {
   const nuevas = filas.map((r) => ({ mes: mes + "-01", sucursal_id: suc, categoria: r.categoria, monto: r.monto }));
   const { error } = await sb.from("costos_fijos").insert(nuevas);
   if (error) { toast(errorMsg(error)); return; }
-  gx.rows.push(...nuevas);
+  gx.rows.push(...nuevas.map((r) => ({ ...r, created_at: new Date().toISOString() })));
   toast(`Copiados ${nuevas.length} gastos de ${mesLabel(ant)} a ${mesLabel(mes)}. Corregí los que cambiaron.`);
   render(); gastosCambiaron();
 }

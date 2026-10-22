@@ -474,5 +474,8 @@ header.top{padding:2px 0 8px;}
 .lis-filtros select{padding:7px 10px; border:1px solid var(--line); border-radius:20px; background:var(--panel); color:var(--ink); font:inherit; font-size:13px; max-width:100%;}
 /* Gerente: importe ya cargado, bloqueado */
 .gx-celda.gx-bloq{background:var(--paper); color:var(--muted); cursor:not-allowed; padding-right:26px; background-image:none;}
-.gl-row span:has(> .gx-bloq){position:relative;}
-.gl-row span:has(> .gx-bloq)::after{content:"🔒"; position:absolute; right:8px; top:50%; transform:translateY(-50%); font-size:12px; pointer-events:none;}
+.gl-inp{display:block; position:relative;}
+.gl-inp:has(> .gx-bloq)::after{content:"🔒"; position:absolute; right:8px; top:50%; transform:translateY(-50%); font-size:12px; pointer-events:none;}
+.gl-celda{display:flex; flex-direction:column; gap:3px;}
+.gl-fecha{font-size:11px; color:var(--muted); line-height:1.2;}
+.gl-fecha:empty{display:none;}
