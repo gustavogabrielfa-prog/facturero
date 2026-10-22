@@ -1985,12 +1985,15 @@ function gastosHtml() {
   const filas = [...activos, ...quitadosConDatos];
   const totalMes = (m) => filas.reduce((a, c) => a + gxValor(c.nombre, m), 0);
   const quitados = gx.conceptos.filter((c) => !c.activo);
-  const celda = (c, m, f, i) => { const v = gxValor(c.nombre, m); return `<input type="text" inputmode="decimal" autocomplete="off" class="monto gx-celda" data-gxcat="${esc(c.nombre)}" data-gxmes="${m}" data-f="${f}" data-c="${i}" value="${v ? esc(montoTexto(v)) : ""}" placeholder="0" aria-label="${esc(c.nombre)} ${esc(mesLabel(m))}">`; };
-  const agregarHtml = esGerente() ? `<div class="hint" style="margin-bottom:0;">La lista de gastos la arma el administrador. Si falta alguno, pedile que lo agregue.</div>` : `<div class="provrow gl-add">
+  const celda = (c, m, f, i) => {
+    const v = gxValor(c.nombre, m), bloq = esGerente() && v > 0;   // el gerente no cambia lo ya cargado
+    return `<input type="text" inputmode="decimal" autocomplete="off" class="monto gx-celda${bloq ? " gx-bloq" : ""}" data-gxcat="${esc(c.nombre)}" data-gxmes="${m}" data-f="${f}" data-c="${i}" value="${v ? esc(montoTexto(v)) : ""}" placeholder="0" aria-label="${esc(c.nombre)} ${esc(mesLabel(m))}"${bloq ? ` readonly title="Ya cargado. Para cambiarlo, pedíselo al administrador."` : ""}>`;
+  };
+  const agregarHtml = `<div class="provrow gl-add">
     <input type="text" id="gxNuevo" placeholder="Nuevo gasto (ej.: Seguro del local)" style="flex:1; padding:10px 12px; border:1px solid var(--line); border-radius:4px; background:var(--panel); color:var(--ink);">
     <button id="btnGxAdd" type="button">+ Agregar gasto</button>
   </div>
-  ${quitados.length ? `<div class="hint" style="margin-bottom:0;">Quitados (lo ya cargado se conserva): ${quitados.map((c) => `${esc(c.nombre)} <button class="linkbtn" data-gxtoggle="${c.id}">Volver a la lista</button>`).join(" · ")}</div>` : ""}`;
+  ${quitados.length && esAdmin() ? `<div class="hint" style="margin-bottom:0;">Quitados (lo ya cargado se conserva): ${quitados.map((c) => `${esc(c.nombre)} <button class="linkbtn" data-gxtoggle="${c.id}">Volver a la lista</button>`).join(" · ")}</div>` : ""}`;
 
   const controles = `<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:12px;">
       ${porMes
@@ -2005,7 +2008,7 @@ function gastosHtml() {
 
   if (porMes) {
     const m = gx.mes, ant = mesMas(m, -1);
-    const puedeCopiar = !totalMes(m) && filas.some((c) => gxValor(c.nombre, ant));
+    const puedeCopiar = esAdmin() && !totalMes(m) && filas.some((c) => gxValor(c.nombre, ant));
     const año = m.slice(0, 4);
     const mesesAño = Array.from({ length: 12 }, (_, i) => `${año}-${String(i + 1).padStart(2, "0")}`);
     const t0 = totalMes(ant);
@@ -2026,7 +2029,7 @@ function gastosHtml() {
         <span class="gl-acc">${c.activo && esAdmin() ? `<button class="linkbtn" data-gxmover="${c.id}" data-dir="-1" title="Subir" aria-label="Subir">↑</button><button class="linkbtn" data-gxmover="${c.id}" data-dir="1" title="Bajar" aria-label="Bajar">↓</button><button class="linkbtn" data-gxren="${c.id}" title="Renombrar" aria-label="Renombrar">✎</button><button class="linkbtn" data-gxtoggle="${c.id}" title="Quitar de la lista" aria-label="Quitar de la lista">✕</button>` : ""}</span>
       </div>`; }).join("")}
     </div>
-    <div style="margin-top:10px;">${info("gx-info", "Escribí el importe y pasá al siguiente con Tab o Enter: se guarda solo. Para borrar un importe, dejá el campo vacío. La lista es la misma todos los meses. La columna de la derecha muestra el mes anterior y cuánto subió (rojo) o bajó (verde).", "ⓘ Cómo se cargan")}</div>
+    <div style="margin-top:10px;">${info("gx-info", "Escribí el importe y pasá al siguiente con Tab o Enter: se guarda solo. Para borrar un importe, dejá el campo vacío. La lista es la misma todos los meses. La columna de la derecha muestra el mes anterior y cuánto subió (rojo) o bajó (verde)." + (esGerente() ? " <b>Una vez guardado, el importe no se puede cambiar</b> (aparece con 🔒): si te equivocaste, pedíselo al administrador." : ""), "ⓘ Cómo se cargan")}</div>
     ${agregarHtml}
   </div>`;
   }
@@ -2037,7 +2040,7 @@ function gastosHtml() {
     <div class="gx-wrap"><table class="gx-tabla">
       <thead><tr><th class="gx-con">${esc(nombreGastoSuc(gx.suc || null))}</th>${meses.map((m, i) => {
         const ant = mesMas(m, -1);
-        const puedeCopiar = !totalMes(m) && filas.some((c) => gxValor(c.nombre, ant)) && m <= mesActual();
+        const puedeCopiar = esAdmin() && !totalMes(m) && filas.some((c) => gxValor(c.nombre, ant)) && m <= mesActual();
         return `<th>${MES_CORTO[i]}${puedeCopiar ? `<button class="gx-copiar" data-gxcopiar="${m}" title="Copiar los importes de ${esc(mesLabel(ant))}">⇐ copiar</button>` : ""}</th>`;
       }).join("")}<th>Total</th></tr></thead>
       <tbody>
@@ -2083,6 +2086,14 @@ async function guardarCeldaGasto(el) {
   const monto = parseMonto(el.value);
   if (isNaN(monto) || monto < 0) { toast("Revisá el importe."); el.classList.add("gx-error"); return; }
   if (Math.abs(monto - gxValor(cat, mes)) < 0.005) { el.classList.remove("gx-error"); return; }
+  if (esGerente()) {
+    if (gxValor(cat, mes) > 0) { el.value = montoTexto(gxValor(cat, mes)); toast("Ese gasto ya está cargado. Para cambiarlo, pedíselo al administrador."); return; }
+    if (!monto) return;
+    const siguiente = document.activeElement;   // a dónde había ido el cursor (Tab / Enter)
+    const ok = await dialogo(`¿Guardar ${cat} de ${mesLabel(mes)}: ${fmtMoney(monto)}? Después no lo vas a poder cambiar.`, { aceptar: "Guardar" });
+    if (!ok) { el.value = ""; el.focus(); return; }
+    if (siguiente && siguiente !== document.body && document.contains(siguiente)) siguiente.focus();
+  }
   el.classList.add("gx-guardando"); el.classList.remove("gx-error");
   const { error } = await sb.rpc("guardar_gasto", { p_mes: mes + "-01", p_sucursal: suc, p_categoria: cat, p_monto: monto });
   el.classList.remove("gx-guardando");
@@ -2090,6 +2101,7 @@ async function guardarCeldaGasto(el) {
   gx.rows = gx.rows.filter((r) => !(r.categoria === cat && r.mes.startsWith(mes) && (r.sucursal_id || null) === suc));
   if (monto > 0) gx.rows.push({ mes: mes + "-01", sucursal_id: suc, categoria: cat, monto });
   el.classList.add("gx-ok"); setTimeout(() => el.classList.remove("gx-ok"), 900);
+  if (esGerente() && monto > 0) { el.readOnly = true; el.classList.add("gx-bloq"); el.title = "Ya cargado. Para cambiarlo, pedíselo al administrador."; }
   actualizarTotalesGx();
   gastosCambiaron();
 }
