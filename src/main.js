@@ -1842,14 +1842,14 @@ function pageResultados() {
 }
 
 /** Bloque resumen con el formato de la planilla: ventas, costo, margen, gastos, utilidad. */
-function bloqueResumen(R, titulo, clase) {
+function bloqueResumen(R, titulo, clase, id) {
   const cols = R.cols, T = R.total, varios = cols.length > 1;
   const signed = (v) => `<span class="${v >= 0 ? "dif-pos" : "dif-neg"}">${fmtMoney(v)}</span>`;
   const pctOr = (v) => (v == null ? "—" : pct(v));
   const fila = (label, get, cls = "", fmt = fmtMoney) => `<tr class="${cls}"><td>${label}</td>${cols.map((c) => `<td>${fmt(get(c))}</td>`).join("")}${varios ? `<td class="tot">${fmt(get(T))}</td>` : ""}</tr>`;
-  return `<div class="er-bloque ${clase}">
-    <div class="er-bloque-h">${esc(titulo)}</div>
-    <div class="er-bloque-scroll"><table class="data-table er-tabla">
+  const res = T.ingresos || T.variables || T.fijos
+    ? `<span class="${T.resultado >= 0 ? "dif-pos" : "dif-neg"}">${T.resultado >= 0 ? "Ganancia" : "Pérdida"} ${fmtMoney(Math.abs(T.resultado))}${T.resultadoPct == null ? "" : " · " + pct(T.resultadoPct)}</span>` : "Sin movimientos";
+  return plegable("er-bloque-" + id, esc(titulo), `<div class="er-bloque-scroll"><table class="data-table er-tabla">
       <thead><tr><th></th>${cols.map((c) => `<th class="er-mes">${esc(tituloMes(c.mes))}</th>`).join("")}${varios ? "<th>Total</th>" : ""}</tr></thead>
       <tbody>
         ${fila("Ventas totales", (c) => c.ingresos)}
@@ -1860,8 +1860,7 @@ function bloqueResumen(R, titulo, clase) {
         ${fila("Utilidad operativa (ganancia)", (c) => c.resultado, "er-final", signed)}
         ${fila("% Utilidad operativa", (c) => c.resultadoPct, "er-pct", pctOr)}
       </tbody>
-    </table></div>
-  </div>`;
+    </table></div>`, { resumen: res, clase: "er-bloque " + clase });
 }
 
 function resultadosHtml() {
@@ -1883,8 +1882,8 @@ function resultadosHtml() {
   // bloques como en la planilla: una por sucursal (con color) y el total
   const conMovimiento = (r) => r.total.ingresos || r.total.variables || r.total.fijos;
   const bloques = todas
-    ? [...state.sucursales.map((s) => [calcularResultados(s.id), s.nombre, sucColor(s.id)]).filter(([r]) => conMovimiento(r)), [R, "Total de las farmacias", "er-total"]]
-    : [[R, sucursalNombre(er.suc), sucColor(er.suc)]];
+    ? [...state.sucursales.map((s) => [calcularResultados(s.id), s.nombre, sucColor(s.id), s.id]).filter(([r]) => conMovimiento(r)), [R, "Total de las farmacias", "er-total", "total"]]
+    : [[R, sucursalNombre(er.suc), sucColor(er.suc), er.suc]];
 
   return `
   ${sinVentas.length ? `<div class="dup-aviso warn mb16">Sin ventas guardadas en: <b>${esc(listaMeses(sinVentas))}</b>. Cargalas en la pestaña Ventas, si no el resultado da de menos.</div>` : ""}
@@ -1899,7 +1898,7 @@ function resultadosHtml() {
     · Posición de IVA: <b>${fmtMoney(Math.abs(T.saldoIva))}</b> ${T.saldoIva >= 0 ? "a pagar" : "a favor"}</div>`,
     { resumen: T.equilibrio != null ? "Equilibrio " + fmtMoney(T.equilibrio / Math.max(1, meses)) + (meses > 1 ? " por mes" : "") : "" })}
 
-  ${bloques.map(([r, titulo, clase]) => bloqueResumen(r, titulo, clase)).join("")}
+  ${bloques.map(([r, titulo, clase, id]) => bloqueResumen(r, titulo, clase, id)).join("")}
 
   ${plegable("er-detalle", `Detalle${todas ? " (todas las sucursales)" : ""}: blanco / negro y cada gasto`,`<div class="hoy-wrap"><table class="data-table er-tabla">
     <thead><tr><th>Concepto</th>${cols.map((c) => `<th class="er-mes">${esc(tituloMes(c.mes))}</th>`).join("")}${varios ? "<th>Total</th>" : ""}</tr></thead>
@@ -1927,7 +1926,7 @@ function resultadosHtml() {
     <button class="btn small" id="btnErPdf">📄 Estado de resultados PDF</button>
     <button class="btn secondary small" id="btnErXls">📊 Excel</button>
   </div>
-  ${info("er-info", `Las compras del mes se toman como costo de ventas: si ese mes se compró mucho para stock (o se vendió stock viejo), el resultado del mes se mueve aunque el negocio no haya cambiado. Mirá varios meses juntos para ver la tendencia. ${esGerente() ? "La parte de los gastos generales (los compartidos entre sucursales) se calcula según lo que vendió tu sucursal ese mes." : 'Los gastos "General" se reparten entre las sucursales según lo que vendió cada una ese mes.'}`, "ⓘ Cómo se calcula")}`;
+  ${info("er-info", `Las compras del mes se toman como costo de ventas: si ese mes se compró mucho para stock (o se vendió stock viejo), el resultado del mes se mueve aunque el negocio no haya cambiado. Mirá varios meses juntos para ver la tendencia. Cada sucursal tiene sus propios gastos operativos.`, "ⓘ Cómo se calcula")}`;
 }
 
 function datosResultados() {
@@ -1941,7 +1940,7 @@ function datosResultados() {
 /* --- Grilla de gastos: conceptos × meses de un año, por sucursal (o general) --- */
 async function cargarGastos() {
   if (esGerente()) gx.suc = state.perfil.sucursal_id;   // el gerente, siempre la suya
-  else if (gx.suc === null) gx.suc = state.sucursales[0]?.id || "";   // arranca en la primera sucursal
+  else if (!gx.suc) gx.suc = state.sucursales[0]?.id || "";   // arranca en la primera sucursal (ya no hay "General")
   gx.cargando = true; gx.error = ""; if (route === "resultados") render();
   try {
     // el año entero y el diciembre anterior (para "copiar el mes anterior" en enero)
@@ -1986,7 +1985,7 @@ const textoCarga = (cat, m) => {
   return iso ? "Cargado el " + new Date(iso).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).replace(",", "") : "";
 };
 
-/** En la suma: de dónde sale cada importe (Argus 1 $… · Argus 2 $… · Compartido $…). */
+/** En la suma: de dónde sale cada importe (Argus 1 $… · Argus 2 $…; "Compartido" solo si quedara algo viejo). */
 function desgloseGasto(cat, m) {
   const partes = [...state.sucursales.map((x) => [x.nombre, x.id]), ["Compartido", null]].map(([n, id]) => [n,
     (gx.rows || []).filter((r) => r.categoria === cat && r.mes.startsWith(m) && (r.sucursal_id || null) === id).reduce((a, r) => a + (Number(r.monto) || 0), 0)])
@@ -2023,8 +2022,7 @@ function gastosHtml() {
         : `<div class="badge-group gx-año" style="margin:0;"><button data-gxaño="${gx.año - 1}" aria-label="Año anterior">‹</button><button class="active" disabled>${gx.año}</button><button data-gxaño="${gx.año + 1}" aria-label="Año siguiente">›</button></div>`}
       ${esGerente() ? `<span class="hint" style="margin:0;">Gastos de <b>${esc(sucursalNombre(state.perfil.sucursal_id))}</b></span>` : `<div class="filters" style="margin:0;">
         ${state.sucursales.map((s) => `<button data-gxsuc="${s.id}" class="${gx.suc === s.id ? "active" : ""}">${esc(s.nombre)}</button>`).join("")}
-        <button data-gxsuc="" class="${!gx.suc ? "active" : ""}" title="Gastos compartidos: se reparten entre las sucursales según lo que vendió cada una">General (compartido)</button>
-        <button data-gxsuc="todas" class="${gxSuma() ? "active" : ""}" title="Suma de todas las sucursales y los compartidos (solo para ver)">Σ Todas (suma)</button>
+        <button data-gxsuc="todas" class="${gxSuma() ? "active" : ""}" title="Suma de todas las sucursales (solo para ver)">Σ Todas (suma)</button>
       </div>`}
       <button class="linkbtn" data-gxvista="${porMes ? "año" : "mes"}" style="margin-left:auto;">${porMes ? "Ver el año completo" : "Volver a la lista del mes"}</button>
     </div>`;
@@ -2052,7 +2050,7 @@ function gastosHtml() {
         <span class="gl-acc">${c.activo && esAdmin() ? `<button class="linkbtn" data-gxmover="${c.id}" data-dir="-1" title="Subir" aria-label="Subir">↑</button><button class="linkbtn" data-gxmover="${c.id}" data-dir="1" title="Bajar" aria-label="Bajar">↓</button><button class="linkbtn" data-gxren="${c.id}" title="Renombrar" aria-label="Renombrar">✎</button><button class="linkbtn" data-gxtoggle="${c.id}" title="Quitar de la lista" aria-label="Quitar de la lista">✕</button>` : ""}</span>
       </div>`; }).join("")}
     </div>
-    <div style="margin-top:10px;">${gxSuma() ? `<div class="hint" style="margin:0;">Σ Es la suma de todas las sucursales y los compartidos, solo para ver. Para cargar o corregir un importe, elegí la sucursal arriba.</div>` : info("gx-info", "Escribí el importe y pasá al siguiente con Tab o Enter: se guarda solo. Para borrar un importe, dejá el campo vacío. La lista es la misma todos los meses. La columna de la derecha muestra el mes anterior y cuánto subió (rojo) o bajó (verde)." + (esGerente() ? " <b>Una vez guardado, el importe no se puede cambiar</b> (aparece con 🔒): si te equivocaste, pedíselo al administrador." : ""), "ⓘ Cómo se cargan")}</div>
+    <div style="margin-top:10px;">${gxSuma() ? `<div class="hint" style="margin:0;">Σ Es la suma de todas las sucursales, solo para ver. Para cargar o corregir un importe, elegí la sucursal arriba.</div>` : info("gx-info", "Escribí el importe y pasá al siguiente con Tab o Enter: se guarda solo. Para borrar un importe, dejá el campo vacío. La lista es la misma todos los meses. La columna de la derecha muestra el mes anterior y cuánto subió (rojo) o bajó (verde)." + (esGerente() ? " <b>Una vez guardado, el importe no se puede cambiar</b> (aparece con 🔒): si te equivocaste, pedíselo al administrador." : ""), "ⓘ Cómo se cargan")}</div>
     ${agregarHtml}
   </div>`;
   }

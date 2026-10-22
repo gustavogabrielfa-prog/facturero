@@ -483,3 +483,7 @@ header.top{padding:2px 0 8px;}
 .gx-suma{display:block; padding:8px 10px; border:1px dashed var(--line); border-radius:4px; text-align:right; font-weight:700; font-size:14px;}
 .gx-suma.vacia{color:var(--muted); font-weight:400;}
 .gx-tabla .gx-suma{border:0; padding:6px 8px; font-size:12.5px;}
+/* Cuadros por sucursal plegables */
+.pleg.er-bloque > .pleg-body{padding:0 0 6px;}
+.pleg.er-bloque > summary .pleg-t{font-size:15px;}
+.pleg.er-bloque{border-left-width:6px;}
