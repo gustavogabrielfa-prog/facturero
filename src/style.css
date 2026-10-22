@@ -487,3 +487,13 @@ header.top{padding:2px 0 8px;}
 .pleg.er-bloque > .pleg-body{padding:0 0 6px;}
 .pleg.er-bloque > summary .pleg-t{font-size:15px;}
 .pleg.er-bloque{border-left-width:6px;}
+/* Gastos: ordenar arrastrando (⠿) o con flechas */
+.gl-nombre{display:flex; align-items:center; gap:8px;}
+.gl-mango{cursor:grab; color:var(--muted); font-size:16px; line-height:1; padding:4px 2px; user-select:none;}
+.gl-mango:hover{color:var(--ink);}
+.gl-mango:active{cursor:grabbing;}
+.gl-row.arrastrando{opacity:.45;}
+.gl-row.soltar-arriba{box-shadow:inset 0 3px 0 var(--accent);}
+.gl-row.soltar-abajo{box-shadow:inset 0 -3px 0 var(--accent);}
+.gl-acc .linkbtn[data-gxmover]{border:1px solid var(--line); border-radius:4px; padding:2px 7px; color:var(--ink); background:var(--paper); font-size:13px;}
+.gl-acc .linkbtn[data-gxmover]:hover{border-color:var(--accent); color:var(--accent);}

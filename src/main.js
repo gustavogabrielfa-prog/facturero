@@ -2043,8 +2043,8 @@ function gastosHtml() {
     ${puedeCopiar ? `<div class="gl-copiar"><button class="btn small" data-gxcopiar="${m}">📋 Copiar los importes de ${esc(mesLabel(ant))}</button><span class="hint" style="margin:0;">Después corregí los que cambiaron.</span></div>` : ""}
     <div class="gl-lista">
       <div class="gl-row gl-head"><span>Gasto</span><span>Importe de ${esc(mesLabel(m))}</span><span>Mes anterior</span><span></span></div>
-      ${filas.map((c, f) => { const v0 = gxValor(c.nombre, ant); return `<div class="gl-row${c.activo ? "" : " gx-quitado"}">
-        <span class="gl-nombre">${esc(c.nombre)}</span>
+      ${filas.map((c, f) => { const v0 = gxValor(c.nombre, ant); const mover = c.activo && esAdmin(); return `<div class="gl-row${c.activo ? "" : " gx-quitado"}"${mover ? ` data-gxfila-id="${c.id}"` : ""}>
+        <span class="gl-nombre">${mover ? `<span class="gl-mango" draggable="true" data-gxmango="${c.id}" title="Arrastrá para mover" aria-hidden="true">⠿</span>` : ""}${esc(c.nombre)}</span>
         <span class="gl-celda"><span class="gl-inp">${celda(c, m, f, 0)}</span><small class="gl-fecha" data-gxfecha="${esc(c.nombre)}">${gxSuma() ? desgloseGasto(c.nombre, m) : textoCarga(c.nombre, m)}</small></span>
         <span class="gl-ant">${v0 ? fmtMoney(v0) : "—"}<small data-gxdif="${esc(c.nombre)}" data-ant="${v0}">${difGasto(gxValor(c.nombre, m), v0)}</small></span>
         <span class="gl-acc">${c.activo && esAdmin() ? `<button class="linkbtn" data-gxmover="${c.id}" data-dir="-1" title="Subir" aria-label="Subir">↑</button><button class="linkbtn" data-gxmover="${c.id}" data-dir="1" title="Bajar" aria-label="Bajar">↓</button><button class="linkbtn" data-gxren="${c.id}" title="Renombrar" aria-label="Renombrar">✎</button><button class="linkbtn" data-gxtoggle="${c.id}" title="Quitar de la lista" aria-label="Quitar de la lista">✕</button>` : ""}</span>
@@ -2138,6 +2138,18 @@ async function copiarGastosMes(mes) {
   gx.rows.push(...nuevas.map((r) => ({ ...r, created_at: new Date().toISOString() })));
   toast(`Copiados ${nuevas.length} gastos de ${mesLabel(ant)} a ${mesLabel(mes)}. Corregí los que cambiaron.`);
   render(); gastosCambiaron();
+}
+
+/** Lleva un gasto de la lista a la posición `hasta` (0 = primero) y guarda el orden de toda la lista. */
+async function moverGasto(id, hasta) {
+  const act = gx.conceptos.filter((c) => c.activo), desde = act.findIndex((c) => c.id === id);
+  if (desde < 0 || hasta < 0 || hasta >= act.length || hasta === desde) return;
+  const [item] = act.splice(desde, 1); act.splice(hasta, 0, item);
+  // se renumera toda la lista para que el orden quede firme
+  const cambios = act.map((c, k) => ({ id: c.id, orden: k + 1 })).filter((x) => gx.conceptos.find((c) => c.id === x.id).orden !== x.orden);
+  const res = await Promise.all(cambios.map((x) => sb.from("gastos_conceptos").update({ orden: x.orden }).eq("id", x.id)));
+  await opConcepto(Promise.resolve(res.find((r) => r.error) || {}));
+  if (er.datos) pintarResultados();
 }
 
 async function opConcepto(op, okMsg) {
@@ -2507,16 +2519,40 @@ function wirePage() {
       const c = gx.conceptos.find((x) => x.id === b.dataset.gxtoggle);
       opConcepto(sb.from("gastos_conceptos").update({ activo: !c.activo }).eq("id", c.id), c.activo ? `"${c.nombre}" quitado de la lista.` : `"${c.nombre}" reactivado.`);
     }));
-    document.querySelectorAll("[data-gxmover]").forEach((b) => b.addEventListener("click", async () => {
-      const act = gx.conceptos.filter((c) => c.activo), i = act.findIndex((c) => c.id === b.dataset.gxmover), j = i + Number(b.dataset.dir);
-      if (j < 0 || j >= act.length) return;
-      [act[i], act[j]] = [act[j], act[i]];
-      // se renumera toda la lista para que el orden quede firme
-      const cambios = act.map((c, k) => ({ id: c.id, orden: k + 1 })).filter((x) => gx.conceptos.find((c) => c.id === x.id).orden !== x.orden);
-      const res = await Promise.all(cambios.map((x) => sb.from("gastos_conceptos").update({ orden: x.orden }).eq("id", x.id)));
-      await opConcepto(Promise.resolve(res.find((r) => r.error) || {}));
-      if (er.datos) pintarResultados();
+    document.querySelectorAll("[data-gxmover]").forEach((b) => b.addEventListener("click", () => {
+      const act = gx.conceptos.filter((c) => c.activo), i = act.findIndex((c) => c.id === b.dataset.gxmover);
+      moverGasto(b.dataset.gxmover, i + Number(b.dataset.dir));
     }));
+    // arrastrar y soltar desde la manija ⠿
+    let arrastrando = null;
+    const limpiarMarcas = () => document.querySelectorAll(".gl-row.soltar-arriba, .gl-row.soltar-abajo, .gl-row.arrastrando").forEach((r) => r.classList.remove("soltar-arriba", "soltar-abajo", "arrastrando"));
+    document.querySelectorAll("[data-gxmango]").forEach((m) => {
+      m.addEventListener("dragstart", (e) => {
+        arrastrando = m.dataset.gxmango;
+        e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", arrastrando);
+        const fila = m.closest(".gl-row"); e.dataTransfer.setDragImage(fila, 20, 20); fila.classList.add("arrastrando");
+      });
+      m.addEventListener("dragend", () => { arrastrando = null; limpiarMarcas(); });
+    });
+    document.querySelectorAll("[data-gxfila-id]").forEach((fila) => {
+      const abajo = (e) => { const r = fila.getBoundingClientRect(); return e.clientY > r.top + r.height / 2; };
+      fila.addEventListener("dragover", (e) => {
+        if (!arrastrando || fila.dataset.gxfilaId === arrastrando) return;
+        e.preventDefault(); e.dataTransfer.dropEffect = "move";
+        fila.classList.toggle("soltar-abajo", abajo(e)); fila.classList.toggle("soltar-arriba", !abajo(e));
+      });
+      fila.addEventListener("dragleave", () => fila.classList.remove("soltar-arriba", "soltar-abajo"));
+      fila.addEventListener("drop", (e) => {
+        if (!arrastrando || fila.dataset.gxfilaId === arrastrando) return;
+        e.preventDefault();
+        const act = gx.conceptos.filter((c) => c.activo);
+        const desde = act.findIndex((c) => c.id === arrastrando);
+        let hasta = act.findIndex((c) => c.id === fila.dataset.gxfilaId) + (abajo(e) ? 1 : 0);
+        if (desde < hasta) hasta--;   // al sacarlo de arriba, todo sube un lugar
+        const id = arrastrando; arrastrando = null; limpiarMarcas();
+        moverGasto(id, hasta);
+      });
+    });
   }
 
   if (route === "arca") {
