@@ -357,9 +357,9 @@ function shell(bodyHtml, logged, tabs = false) {
       <button data-route="subir" class="${route === "subir" ? "active" : ""}">＋ Subir</button>
       <button data-route="proveedores" class="${route === "proveedores" ? "active" : ""}">🏷 Proveedores</button>
       ${veListado() ? `<button data-route="listado" class="${route === "listado" ? "active" : ""}">🗂 Listado</button>` : ""}
-      ${esAdmin() ? `<button data-route="arca" class="${route === "arca" ? "active" : ""}">🧾 Compara ARCA</button>` : ""}
       ${veListado() ? `<button data-route="ventas" class="${route === "ventas" ? "active" : ""}">💵 Ventas</button>` : ""}
       ${veListado() ? `<button data-route="resultados" class="${route === "resultados" ? "active" : ""}">📈 Resultados</button>` : ""}
+      ${esAdmin() ? `<button data-route="arca" class="${route === "arca" ? "active" : ""}">🧾 Compara ARCA</button>` : ""}
       ${esAdmin() ? `<button data-route="copias" class="${route === "copias" ? "active" : ""}">🛟 Copias</button>` : ""}
     </div>` : ""}
     </div>
