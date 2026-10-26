@@ -2200,9 +2200,15 @@ function pageCopias() {
   <div class="pagehead"><h1 class="serif">Copias de seguridad</h1><p>Para no perder nunca los datos de Facturero.</p></div>
   <div class="copias">
   ${paso(1, "Copia automática en Google Drive",
-    "Todas las noches se guarda sola una copia en la carpeta <b>Facturero - Respaldos</b> de tu Google Drive. No tenés que hacer nada.",
+    "Se activa <b>una sola vez</b> (unos 5 minutos) y desde ahí, todas las noches, se guarda sola una copia en la carpeta <b>Facturero - Respaldos</b> de tu Google Drive. Si la carpeta todavía no aparece en tu Drive, es porque falta activarla.",
     `<a class="btn" href="https://drive.google.com/drive/search?q=${encodeURIComponent("Facturero - Respaldos")}" target="_blank" rel="noopener">📁 Abrir la carpeta en Google Drive</a>
-     ${info("cop-drive-info", "Si la carpeta no aparece, la copia automática todavía no está activada (se activa una sola vez; los pasos están en el README del proyecto). Hasta entonces podés usar el botón del paso 2.", "ⓘ No encuentro la carpeta")}`)}
+     ${info("cop-drive-info", `<ol style="margin:4px 0 0; padding-left:18px; line-height:1.6;">
+       <li>En <a href="https://script.google.com" target="_blank" rel="noopener">script.google.com</a> (con tu cuenta de Google): <b>Nuevo proyecto</b>.</li>
+       <li>Borrá lo que aparece, pegá el código del archivo <b>scripts/respaldo-drive.gs</b> del proyecto y guardá (Ctrl+S).</li>
+       <li>⚙ Configuración del proyecto → Propiedades de la secuencia de comandos: agregá <b>SUPABASE_URL</b> y <b>SUPABASE_SECRET_KEY</b> (la clave secreta de Supabase → Project Settings → API Keys).</li>
+       <li>En el editor elegí la función <b>instalar</b> y tocá <b>▶ Ejecutar</b>.</li>
+       <li>Aceptá los permisos. Si dice "Google no verificó esta app": Configuración avanzada → Ir a … (no seguro) → Permitir. Es normal: el script es tuyo.</li>
+     </ol>Mientras tanto podés usar el botón del paso 2.`, "ⓘ Cómo activarla")}`)}
   ${paso(2, "Bajar una copia ahora",
     "Baja un archivo .zip chiquito con todos los datos. Guardalo donde quieras: la compu, un pendrive o Drive.",
     `<button class="btn" id="btnRespaldo">⬇ Descargar copia</button>`)}
