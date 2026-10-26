@@ -42,7 +42,7 @@ Para usar otra base de Supabase en un entorno, crear `.env.production` o `.env.d
 Un `.zip` liviano con un `.csv` por tabla (se abren con Excel o con el Bloc de notas): unos 80 KB cada 10.000 comprobantes.
 Requiere la migración [`018_respaldo.sql`](supabase/migrations/018_respaldo.sql).
 
-- **Descargar / restaurar a mano:** Listado → 🛠 Herramientas del administrador → *Copia de respaldo (liviana)*.
+- **Descargar / restaurar a mano:** pestaña **🛟 Copias** (solo administrador).
   Al restaurar muestra antes qué va a agregar y solo agrega lo que falta (no duplica ni pisa nada).
 
 ### Respaldo automático a Google Drive

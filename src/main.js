@@ -311,12 +311,14 @@ function render() {
   if (route === "arca" && !esAdmin()) route = "subir";
   if (route === "ventas" && !veListado()) route = "subir";
   if (route === "resultados" && !veListado()) route = "subir";
+  if (route === "copias" && !esAdmin()) route = "subir";
   let body;
   if (route === "listado") body = pageListado();
   else if (route === "arca") body = pageArca();
   else if (route === "ventas") body = pageVentas();
   else if (route === "resultados") body = pageResultados();
   else if (route === "proveedores") body = pageProveedores();
+  else if (route === "copias") body = pageCopias();
   else { route = "subir"; body = pageSubir(); }
 
   document.body.dataset.mode = route === "subir" && draft ? (draft.tipo === "NOTA_CREDITO" ? "NOTA_CREDITO" : draft.grupo) : "";
@@ -358,6 +360,7 @@ function shell(bodyHtml, logged, tabs = false) {
       ${esAdmin() ? `<button data-route="arca" class="${route === "arca" ? "active" : ""}">🧾 Compara ARCA</button>` : ""}
       ${veListado() ? `<button data-route="ventas" class="${route === "ventas" ? "active" : ""}">💵 Ventas</button>` : ""}
       ${veListado() ? `<button data-route="resultados" class="${route === "resultados" ? "active" : ""}">📈 Resultados</button>` : ""}
+      ${esAdmin() ? `<button data-route="copias" class="${route === "copias" ? "active" : ""}">🛟 Copias</button>` : ""}
     </div>` : ""}
     </div>
     ${bodyHtml}
@@ -1078,18 +1081,7 @@ function pageListado() {
   </section>
 
   ${esAdmin() ? plegable("lis-herramientas", "🛠 Herramientas del administrador", `
-  <div class="hint" style="margin-top:0;">Copia completa, duplicados, otros tributos e importar.</div>
-  <div class="section-label">Copia completa</div>
-  <div class="filters"><button data-copiatodo>⬇ Descargar todo (Excel)</button></div>
-  ${info("lis-copia-info", "Un Excel con todo: estado de resultados, comprobantes, ventas, gastos operativos, proveedores y listas. Sirve para trabajar en Excel, para el contador y como respaldo. Conviene bajarlo una vez por mes.", "ⓘ Qué trae la copia")}
-
-  <div class="section-label">Copia de respaldo (liviana)</div>
-  <div class="filters">
-    <button id="btnRespaldo">⬇ Descargar copia (.zip)</button>
-    <button id="btnRestaurar">📥 Restaurar desde copia</button>
-    <input type="file" id="restaurarFile" accept=".zip,application/zip" style="display:none;">
-  </div>
-  ${info("lis-respaldo-info", "Un .zip chiquito con un archivo .csv por tabla (se abren con Excel o con el Bloc de notas). Es la misma copia que se guarda sola todas las noches en Google Drive. Para restaurar elegí el .zip sin descomprimir: antes de guardar te muestra qué va a agregar, y solo agrega lo que falta (no duplica ni pisa nada).", "ⓘ Cómo funciona")}
+  <div class="hint" style="margin-top:0;">Duplicados, otros tributos e importar. Las copias de seguridad están en la pestaña 🛟 Copias.</div>
 
   ${seccionDuplicados()}
 
@@ -2193,6 +2185,37 @@ async function copiaCompleta() {
   botones.forEach((b) => { b.disabled = false; b.textContent = b.dataset.txt; });
 }
 
+/* ---------- COPIAS DE SEGURIDAD (admin): todo en un solo lugar ---------- */
+function pageCopias() {
+  const paso = (n, titulo, texto, botones) => `
+  <div class="panel copia-paso">
+    <div class="copia-num">${n}</div>
+    <div class="copia-body">
+      <div class="copia-tit">${titulo}</div>
+      <p class="copia-txt">${texto}</p>
+      ${botones}
+    </div>
+  </div>`;
+  return `
+  <div class="pagehead"><h1 class="serif">Copias de seguridad</h1><p>Para no perder nunca los datos de Facturero.</p></div>
+  <div class="copias">
+  ${paso(1, "Copia automática en Google Drive",
+    "Todas las noches se guarda sola una copia en la carpeta <b>Facturero - Respaldos</b> de tu Google Drive. No tenés que hacer nada.",
+    `<a class="btn" href="https://drive.google.com/drive/search?q=${encodeURIComponent("Facturero - Respaldos")}" target="_blank" rel="noopener">📁 Abrir la carpeta en Google Drive</a>
+     ${info("cop-drive-info", "Si la carpeta no aparece, la copia automática todavía no está activada (se activa una sola vez; los pasos están en el README del proyecto). Hasta entonces podés usar el botón del paso 2.", "ⓘ No encuentro la carpeta")}`)}
+  ${paso(2, "Bajar una copia ahora",
+    "Baja un archivo .zip chiquito con todos los datos. Guardalo donde quieras: la compu, un pendrive o Drive.",
+    `<button class="btn" id="btnRespaldo">⬇ Descargar copia</button>`)}
+  ${paso(3, "Recuperar datos desde una copia",
+    "Si se borró algo por error, elegí una copia (.zip, sin descomprimir). Antes de cambiar nada te muestra qué va a agregar; lo que ya está cargado no se toca.",
+    `<button class="btn secondary" id="btnRestaurar">📥 Restaurar desde una copia</button>
+     <input type="file" id="restaurarFile" accept=".zip,application/zip" style="display:none;">`)}
+  ${paso(4, "Excel para mirar o para el contador",
+    "Un Excel con todo, ordenado y con el estado de resultados. Es para leer, no para restaurar.",
+    `<button class="btn secondary" data-copiatodo>⬇ Descargar todo en Excel</button>`)}
+  </div>`;
+}
+
 async function descargarCopiaLiviana() {
   const b = document.getElementById("btnRespaldo");
   if (b) { b.disabled = true; b.textContent = "Preparando la copia…"; }
@@ -2200,7 +2223,7 @@ async function descargarCopiaLiviana() {
     const r = await descargarRespaldo();
     toast(`Copia descargada (${r.kb} KB): ${r.nombre}`);
   } catch (e) { console.error(e); toast("No se pudo armar la copia: " + errorMsg(e)); }
-  if (b) { b.disabled = false; b.textContent = "⬇ Descargar copia (.zip)"; }
+  if (b) { b.disabled = false; b.textContent = "⬇ Descargar copia"; }
 }
 
 const NOMBRES_RESPALDO = [["comprobantes", "comprobantes"], ["ventas_diarias", "registros de ventas"], ["costos_fijos", "gastos operativos"],
@@ -2429,6 +2452,9 @@ function wirePage() {
     const input = document.getElementById("importFile");
     on("btnImport", "click", () => input.click());
     input?.addEventListener("change", (e) => { const f = e.target.files[0]; if (f) importarBackup(f); });
+  }
+
+  if (route === "copias") {
     on("btnRespaldo", "click", descargarCopiaLiviana);
     const resp = document.getElementById("restaurarFile");
     on("btnRestaurar", "click", () => resp.click());

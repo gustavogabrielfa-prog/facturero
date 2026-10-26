@@ -77,7 +77,7 @@ function leame(datos) {
     `Fecha: ${generado.toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" })}`,
     "",
     "Cada archivo .csv es una tabla. Se abren con Excel o con el Bloc de notas.",
-    "Para volver a cargar la copia: Facturero > Listado > Herramientas del administrador > Restaurar desde copia,",
+    "Para volver a cargar la copia: Facturero > pestaña Copias > Restaurar desde una copia,",
     "y elegí este mismo .zip (sin descomprimir). Solo se agrega lo que falta: no se duplica ni se pisa nada.",
     "No modifiques los .csv si después vas a restaurar la copia.",
     "",
