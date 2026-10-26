@@ -345,7 +345,7 @@ function shell(bodyHtml, logged, tabs = false) {
       : sucursalNombre(state.perfil.sucursal_id)
     : "";
   return `
-  <div class="wrap${logged && (route === "listado" || route === "subir" || route === "proveedores" || route === "arca" || route === "ventas" || route === "resultados") ? " ancho ruta-" + route : ""}">
+  <div class="wrap${logged && (route === "listado" || route === "subir" || route === "proveedores" || route === "arca" || route === "ventas" || route === "resultados" || route === "copias") ? " ancho ruta-" + route : ""}">
     <div class="pivote">
     <header class="top">
       <div class="brand"><div class="brand-mark">F</div><div class="brand-name">Facturero</div></div>
@@ -370,6 +370,10 @@ const ICONOS = {
   resultados: '<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>',
   arca: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/>',
   copias: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
+  carpeta: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  descargar: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+  restaurar: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+  excel: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h8"/><path d="M8 17h8"/><path d="M12 13v4"/>',
 };
 const icono = (n) => `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONOS[n]}</svg>`;
 
@@ -2191,13 +2195,13 @@ async function copiaCompleta() {
   if (copiando) return;
   copiando = true;
   const botones = [...document.querySelectorAll("[data-copiatodo]")];
-  botones.forEach((b) => { b.disabled = true; b.dataset.txt = b.textContent; b.textContent = "Preparando la copia…"; });
+  botones.forEach((b) => { b.disabled = true; b.dataset.txt = b.innerHTML; b.textContent = "Preparando la copia…"; });
   try {
     const n = await descargarTodo();
     toast(`Copia descargada: ${n.comprobantes} comprobantes, ${n.ventas} registros de ventas, ${n.gastos} gastos y ${n.proveedores} proveedores.`);
   } catch (e) { console.error(e); toast("No se pudo armar la copia: " + errorMsg(e)); }
   copiando = false;
-  botones.forEach((b) => { b.disabled = false; b.textContent = b.dataset.txt; });
+  botones.forEach((b) => { b.disabled = false; b.innerHTML = b.dataset.txt; });
 }
 
 /* ---------- COPIAS DE SEGURIDAD (admin): todo en un solo lugar ---------- */
@@ -2216,29 +2220,30 @@ function pageCopias() {
   <div class="copias">
   ${paso(1, "Copia automática en Google Drive",
     "Todas las noches se guarda sola una copia en tu Google Drive, en la carpeta <b>Facturero - Respaldos</b>.",
-    `<a class="btn" href="https://drive.google.com/drive/search?q=${encodeURIComponent("Facturero - Respaldos")}" target="_blank" rel="noopener">📁 Ver las copias en Google Drive</a>
+    `<a class="btn" href="https://drive.google.com/drive/search?q=${encodeURIComponent("Facturero - Respaldos")}" target="_blank" rel="noopener">${icono("carpeta")}Ver las copias en Google Drive</a>
      <p class="copia-nota">Si la carpeta no aparece, la copia automática todavía no está activada.</p>`)}
   ${paso(2, "Bajar una copia ahora",
     "Baja un archivo .zip chiquito con todos los datos. Guardalo donde quieras: la compu, un pendrive o Drive.",
-    `<button class="btn" id="btnRespaldo">⬇ Descargar copia</button>`)}
+    `<button class="btn" id="btnRespaldo">${icono("descargar")}Descargar copia</button>`)}
   ${paso(3, "Recuperar datos desde una copia",
     "Si se borró algo por error, elegí una copia (.zip, sin descomprimir). Antes de cambiar nada te muestra qué va a agregar; lo que ya está cargado no se toca.",
-    `<button class="btn secondary" id="btnRestaurar">📥 Restaurar desde una copia</button>
+    `<button class="btn secondary" id="btnRestaurar">${icono("restaurar")}Restaurar desde una copia</button>
      <input type="file" id="restaurarFile" accept=".zip,application/zip" style="display:none;">`)}
   ${paso(4, "Excel para mirar o para el contador",
     "Un Excel con todo, ordenado y con el estado de resultados. Es para leer, no para restaurar.",
-    `<button class="btn secondary" data-copiatodo>⬇ Descargar todo en Excel</button>`)}
+    `<button class="btn secondary" data-copiatodo>${icono("excel")}Descargar todo en Excel</button>`)}
   </div>`;
 }
 
 async function descargarCopiaLiviana() {
   const b = document.getElementById("btnRespaldo");
+  const antes = b?.innerHTML;
   if (b) { b.disabled = true; b.textContent = "Preparando la copia…"; }
   try {
     const r = await descargarRespaldo();
     toast(`Copia descargada (${r.kb} KB): ${r.nombre}`);
   } catch (e) { console.error(e); toast("No se pudo armar la copia: " + errorMsg(e)); }
-  if (b) { b.disabled = false; b.textContent = "⬇ Descargar copia"; }
+  if (b) { b.disabled = false; b.innerHTML = antes; }
 }
 
 const NOMBRES_RESPALDO = [["comprobantes", "comprobantes"], ["ventas_diarias", "registros de ventas"], ["costos_fijos", "gastos operativos"],

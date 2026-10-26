@@ -530,3 +530,5 @@ body[data-mode="NOTA_CREDITO"]{--fondo:var(--danger-bg); --ficha-acento:var(--da
   .fichas-admin .ficha{padding-left:10px; padding-right:10px;}
   .fichas-admin .ficha span{display:none;}
 }
+/* Íconos de línea dentro de los botones (mismo estilo que el menú) */
+.btn .ico{width:17px; height:17px; vertical-align:-3px; margin-right:8px;}
