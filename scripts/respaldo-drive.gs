@@ -72,14 +72,18 @@ function instalar() {
 }
 
 function pedirDatos(props) {
-  const url = (props.getProperty("SUPABASE_URL") || "").replace(/\/+$/, "");
-  const clave = props.getProperty("SUPABASE_SECRET_KEY") || "";
+  const url = (props.getProperty("SUPABASE_URL") || "").trim().replace(/\/+$/, "");
+  const clave = (props.getProperty("SUPABASE_SECRET_KEY") || "").trim();
   if (!url || !clave) throw new Error("Faltan SUPABASE_URL o SUPABASE_SECRET_KEY en Configuración del proyecto > Propiedades de la secuencia de comandos.");
   const headers = { apikey: clave };
   if (!clave.startsWith("sb_")) headers.Authorization = "Bearer " + clave;   // clave service_role vieja (JWT)
   const res = UrlFetchApp.fetch(url + "/rest/v1/rpc/respaldo_datos", {
     method: "post", contentType: "application/json", payload: "{}", headers, muteHttpExceptions: true,
   });
+  if (res.getResponseCode() === 401) {   // muestra solo el tipo de clave, nunca la clave
+    const tipo = /^(sb_\w+?_|eyJ)/.test(clave) ? `empieza con "${clave.match(/^(sb_\w+?_|eyJ)/)[0]}"` : "no parece una clave de Supabase";
+    throw new Error(`Supabase rechazó la clave. Tiene que ser la clave secreta completa (empieza con "sb_secret_"); la cargada ${tipo} y tiene ${clave.length} caracteres.`);
+  }
   if (res.getResponseCode() !== 200) throw new Error(`Supabase respondió ${res.getResponseCode()}: ${res.getContentText().slice(0, 300)}`);
   const datos = JSON.parse(res.getContentText());
   if (datos.formato !== FORMATO) throw new Error("Respuesta inesperada de Supabase (¿falta correr la migración 018?).");
