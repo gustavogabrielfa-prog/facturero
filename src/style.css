@@ -27,8 +27,6 @@ html,body{margin:0;background:var(--paper);color:var(--ink);}
 body{min-height:100vh;-webkit-font-smoothing:antialiased; transition:background-color .25s ease;}
 body[data-mode="NO_FACTURADO"]{ background: var(--nofacturado-bg); }
 body[data-mode="NO_FACTURADO"] .brand-mark{ border-color: var(--nofacturado); color: var(--nofacturado); }
-body[data-mode="NO_FACTURADO"] .tabs{ border-color: var(--nofacturado); }
-body[data-mode="NO_FACTURADO"] .tabs button.active{ background: var(--nofacturado); color:#fff; }
 body[data-mode="NO_FACTURADO"] .btn:not(.secondary):not(.danger){ background: var(--nofacturado); border-color: var(--nofacturado); color:#fff; }
 body[data-mode="NO_FACTURADO"] .field input, body[data-mode="NO_FACTURADO"] .field select, body[data-mode="NO_FACTURADO"] .field textarea{ border-color: var(--nofacturado); }
 body[data-mode="NO_FACTURADO"] .panel, body[data-mode="NO_FACTURADO"] .newprov, body[data-mode="NO_FACTURADO"] .provrow button{ border-color: var(--nofacturado); }
@@ -37,8 +35,6 @@ body[data-mode="NO_FACTURADO"] ::selection{ background: var(--nofacturado); colo
 body[data-mode="NO_FACTURADO"] input:focus-visible, body[data-mode="NO_FACTURADO"] select:focus-visible, body[data-mode="NO_FACTURADO"] textarea:focus-visible, body[data-mode="NO_FACTURADO"] button:focus-visible{ outline-color: var(--nofacturado); }
 body[data-mode="NOTA_CREDITO"]{ background: var(--danger-bg); }
 body[data-mode="NOTA_CREDITO"] .brand-mark{ border-color: var(--danger); color: var(--danger); }
-body[data-mode="NOTA_CREDITO"] .tabs{ border-color: var(--danger); }
-body[data-mode="NOTA_CREDITO"] .tabs button.active{ background: var(--danger); color:#fff; }
 body[data-mode="NOTA_CREDITO"] .btn:not(.secondary):not(.danger){ background: var(--danger); border-color: var(--danger); color:#fff; }
 body[data-mode="NOTA_CREDITO"] .field input, body[data-mode="NOTA_CREDITO"] .field select, body[data-mode="NOTA_CREDITO"] .field textarea{ border-color: var(--danger); }
 body[data-mode="NOTA_CREDITO"] .panel, body[data-mode="NOTA_CREDITO"] .newprov, body[data-mode="NOTA_CREDITO"] .provrow button{ border-color: var(--danger); }
@@ -59,10 +55,6 @@ header.top{display:flex; align-items:center; justify-content:space-between; padd
 .brand-name{font-family:'Fraunces',serif; font-size:19px; font-weight:600;}
 .suc-badge{font-size:11px; font-weight:700; color:var(--muted); border:1px solid var(--line); border-radius:20px; padding:4px 10px;}
 
-.tabs{display:flex; border:1px solid var(--line); border-radius:5px; overflow:hidden; margin-bottom:26px;}
-.tabs button{flex:1; padding:11px 8px; background:var(--panel); border:none; font-size:13.5px; font-weight:600; color:var(--muted); border-right:1px solid var(--line);}
-.tabs button:last-child{border-right:none;}
-.tabs button.active{background:var(--ink); color:var(--paper);}
 
 .panel{background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:22px;}
 .field{display:flex; flex-direction:column; gap:6px; margin-bottom:16px;}
@@ -312,7 +304,6 @@ body[data-mode="NOTA_CREDITO"] .field .provrow select{background:var(--panel); b
 .pivote{padding-top:4px;}
 header.top{padding:2px 0 8px;}
 .pivote .tabs{margin-bottom:12px;}
-.tabs button{padding:9px 8px;}
 .pagehead{margin-bottom:12px;}
 .pagehead h1{font-size:21px; margin-bottom:2px;}
 .quien{display:inline-block; font-size:10.5px; font-weight:700; color:var(--ink); border:1px solid var(--muted); border-radius:4px; padding:0 5px; line-height:1.5;}
@@ -508,3 +499,34 @@ header.top{padding:2px 0 8px;}
 .copia-body .btn{max-width:340px;}
 .copia-body .pleg-info{margin-top:10px;}
 .copia-nota{margin:10px 0 0; font-size:12.5px; color:var(--muted);}
+
+/* ---------- Menú tipo fichero: la ficha elegida queda adelante, pegada a su contenido ---------- */
+body{--fondo:var(--paper); --ficha-acento:var(--accent);}
+body[data-mode="NO_FACTURADO"]{--fondo:var(--nofacturado-bg); --ficha-acento:var(--nofacturado);}
+body[data-mode="NOTA_CREDITO"]{--fondo:var(--danger-bg); --ficha-acento:var(--danger);}
+.tabs.fichero{--borde-ficha:color-mix(in srgb, var(--ink) 30%, var(--fondo)); display:flex; align-items:flex-end; gap:14px; border-bottom:1.5px solid var(--borde-ficha); margin-bottom:22px; padding:0 4px;
+  overflow-x:auto; scrollbar-width:none;}
+.tabs.fichero::-webkit-scrollbar{display:none;}
+.fichas{display:flex; align-items:flex-end; gap:4px; flex-shrink:0;}
+.fichas-admin{margin-left:auto;}
+.ficha{display:inline-flex; align-items:center; gap:8px; padding:9px 18px 8px; margin-bottom:-1.5px; white-space:nowrap;
+  font-size:13.5px; font-weight:600; color:var(--muted);
+  background:color-mix(in srgb, var(--ink) 9%, var(--fondo));
+  border:1px solid color-mix(in srgb, var(--ink) 16%, var(--fondo)); border-bottom:1.5px solid var(--borde-ficha); border-radius:10px 10px 0 0;
+  transition:background-color .15s ease, color .15s ease;}
+.ficha:hover{color:var(--ink); background:color-mix(in srgb, var(--ink) 5%, var(--fondo));}
+.ficha .ico{width:16px; height:16px; flex-shrink:0; opacity:.8;}
+.ficha.active{color:var(--ink); font-weight:700; background:var(--fondo); border:1.5px solid var(--borde-ficha); border-bottom-color:var(--fondo);
+  box-shadow:inset 0 4px 0 var(--ficha-acento); padding-top:13px; padding-bottom:9px; font-size:14px;}
+.ficha.active .ico{color:var(--ficha-acento); opacity:1;}
+.fichas-admin .ficha{font-size:12.5px; padding-left:13px; padding-right:13px;}
+.pivote .tabs.fichero{margin-bottom:16px;}
+/* Menú angosto (debajo de 1100px el encabezado mide 640px): fichas más compactas; Compara ARCA y Copias solo con el ícono */
+@media (max-width:1099px){
+  .tabs.fichero{gap:8px; padding:0 2px;}
+  .fichas{gap:3px;}
+  .ficha{padding:8px 11px 7px; gap:6px; font-size:12.5px;}
+  .ficha.active{padding-top:11px; padding-bottom:8px; font-size:13px;}
+  .fichas-admin .ficha{padding-left:10px; padding-right:10px;}
+  .fichas-admin .ficha span{display:none;}
+}
