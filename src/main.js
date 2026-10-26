@@ -9,6 +9,7 @@ import { generarReportePDF, generarReporteExcel, generarInformeArca, generarInfo
 import { leerArchivoArca, compararArca, rangoArca } from "./arca.js";
 import { leerLibroVentas, puntosDeVenta, resumenVentas, filasParaGuardar, resumenGuardado, compararVentasCompras } from "./ventas.js";
 import { descargarTodo } from "./exportar.js";
+import { descargarRespaldo, leerRespaldo, restaurarRespaldo } from "./respaldo.js";
 import { estadoResultados, mesesEntre, mesMas, mesLabel, finDeMes } from "./resultados.js";
 
 /* ---------- STATE ---------- */
@@ -1081,6 +1082,14 @@ function pageListado() {
   <div class="section-label">Copia completa</div>
   <div class="filters"><button data-copiatodo>⬇ Descargar todo (Excel)</button></div>
   ${info("lis-copia-info", "Un Excel con todo: estado de resultados, comprobantes, ventas, gastos operativos, proveedores y listas. Sirve para trabajar en Excel, para el contador y como respaldo. Conviene bajarlo una vez por mes.", "ⓘ Qué trae la copia")}
+
+  <div class="section-label">Copia de respaldo (liviana)</div>
+  <div class="filters">
+    <button id="btnRespaldo">⬇ Descargar copia (.zip)</button>
+    <button id="btnRestaurar">📥 Restaurar desde copia</button>
+    <input type="file" id="restaurarFile" accept=".zip,application/zip" style="display:none;">
+  </div>
+  ${info("lis-respaldo-info", "Un .zip chiquito con un archivo .csv por tabla (se abren con Excel o con el Bloc de notas). Es la misma copia que se guarda sola todas las noches en Google Drive. Para restaurar elegí el .zip sin descomprimir: antes de guardar te muestra qué va a agregar, y solo agrega lo que falta (no duplica ni pisa nada).", "ⓘ Cómo funciona")}
 
   ${seccionDuplicados()}
 
@@ -2184,6 +2193,37 @@ async function copiaCompleta() {
   botones.forEach((b) => { b.disabled = false; b.textContent = b.dataset.txt; });
 }
 
+async function descargarCopiaLiviana() {
+  const b = document.getElementById("btnRespaldo");
+  if (b) { b.disabled = true; b.textContent = "Preparando la copia…"; }
+  try {
+    const r = await descargarRespaldo();
+    toast(`Copia descargada (${r.kb} KB): ${r.nombre}`);
+  } catch (e) { console.error(e); toast("No se pudo armar la copia: " + errorMsg(e)); }
+  if (b) { b.disabled = false; b.textContent = "⬇ Descargar copia (.zip)"; }
+}
+
+const NOMBRES_RESPALDO = [["comprobantes", "comprobantes"], ["ventas_diarias", "registros de ventas"], ["costos_fijos", "gastos operativos"],
+  ["proveedores", "proveedores"], ["sucursales", "sucursales"], ["gastos_conceptos", "gastos de la lista"], ["tributos", "otros tributos"]];
+
+async function restaurarCopia(file) {
+  try {
+    toast("Revisando la copia…");
+    const num = (x) => Number(x).toLocaleString("es-AR");
+    const p = await leerRespaldo(file);
+    const prev = await restaurarRespaldo(p, true);
+    const nuevos = NOMBRES_RESPALDO.filter(([t]) => prev.agregados[t] > 0).map(([t, n]) => `${num(prev.agregados[t])} ${n}`);
+    const del = p.generado ? ` del ${new Date(p.generado).toLocaleDateString("es-AR")}` : "";
+    if (!nuevos.length) { toast(`Todo lo de la copia${del} ya está cargado: no hay nada para agregar.`); return; }
+    const msg = `La copia${del} tiene ${num(prev.en_copia.comprobantes)} comprobantes. Se van a agregar: ${nuevos.join(", ")}. Lo demás ya está cargado y no se toca. ¿Restaurar?`;
+    if (!(await dialogo(msg, { aceptar: "Restaurar" }))) return;
+    toast("Restaurando…");
+    await restaurarRespaldo(p, false);
+    toast(`Copia restaurada: ${nuevos.join(", ")}.`);
+    setTimeout(() => location.reload(), 1800);
+  } catch (e) { console.error(e); toast(errorMsg(e)); }
+}
+
 function pageProveedores() {
   return `
   <div class="pagehead"><h1 class="serif">Proveedores</h1><p>Agregá los proveedores una vez y quedan disponibles para todas las sucursales.</p></div>
@@ -2389,6 +2429,10 @@ function wirePage() {
     const input = document.getElementById("importFile");
     on("btnImport", "click", () => input.click());
     input?.addEventListener("change", (e) => { const f = e.target.files[0]; if (f) importarBackup(f); });
+    on("btnRespaldo", "click", descargarCopiaLiviana);
+    const resp = document.getElementById("restaurarFile");
+    on("btnRestaurar", "click", () => resp.click());
+    resp?.addEventListener("change", (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) restaurarCopia(f); });
   }
 
   if (route === "ventas") {
