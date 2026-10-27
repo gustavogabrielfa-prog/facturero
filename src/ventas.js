@@ -165,7 +165,7 @@ export function compararVentasCompras(ventasRows, compras, desde, hasta, sucursa
   const dias = {};
   for (let d = new Date(desde + "T00:00:00"), fin = new Date(hasta + "T00:00:00"); d <= fin; d.setDate(d.getDate() + 1)) {
     const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    dias[k] = { fecha: k, ventasBlanco: 0, comprasBlanco: 0, hayVentas: false };
+    dias[k] = { fecha: k, ventasBlanco: 0, comprasBlanco: 0, ventasNegro: 0, comprasNegro: 0, hayVentas: false };
   }
   const sumar = (id, campo, v) => { grupos.general[campo] += v; if (grupos[id]) grupos[id][campo] += v; };
   for (const r of ventasRows) {
@@ -174,7 +174,10 @@ export function compararVentasCompras(ventasRows, compras, desde, hasta, sucursa
       sumar(r.sucursal_id, "ventasBlanco", v);
       sumar(r.sucursal_id, "ivaDebito", n(r.iva105) + n(r.iva21) + n(r.iva_otros) + n(r.percep));
       if (dias[r.fecha]) dias[r.fecha].ventasBlanco += v;
-    } else sumar(r.sucursal_id, "ventasNegro", v);
+    } else {
+      sumar(r.sucursal_id, "ventasNegro", v);
+      if (dias[r.fecha]) dias[r.fecha].ventasNegro += v;
+    }
     if (dias[r.fecha]) dias[r.fecha].hayVentas = true;
   }
   for (const c of compras) {
@@ -183,18 +186,25 @@ export function compararVentasCompras(ventasRows, compras, desde, hasta, sucursa
       sumar(c.sucursal_id, "comprasBlanco", v);
       sumar(c.sucursal_id, "ivaCredito", sg * (n(c.iva21) + n(c.iva105) + n(c.iva27) + n(c.iva5) + n(c.iva25)));
       if (dias[c.fecha]) dias[c.fecha].comprasBlanco += v;
-    } else sumar(c.sucursal_id, "comprasNegro", v);
+    } else {
+      sumar(c.sucursal_id, "comprasNegro", v);
+      if (dias[c.fecha]) dias[c.fecha].comprasNegro += v;
+    }
   }
   for (const g of Object.values(grupos)) {
     g.dif = g.ventasBlanco - g.comprasBlanco;
     g.cobertura = g.comprasBlanco > 0 ? g.ventasBlanco / g.comprasBlanco : null;
     g.saldoIva = g.ivaDebito - g.ivaCredito;
     g.difNegro = g.ventasNegro - g.comprasNegro;
+    // Lo que quedó: todo lo vendido (blanco + negro) menos todo lo comprado (blanco + negro)
+    g.ventasTotal = g.ventasBlanco + g.ventasNegro;
+    g.comprasTotal = g.comprasBlanco + g.comprasNegro;
+    g.quedo = g.ventasTotal - g.comprasTotal;
   }
   let acV = 0, acC = 0;
   const lista = Object.values(dias).sort((a, b) => a.fecha.localeCompare(b.fecha)).map((d) => {
     acV += d.ventasBlanco; acC += d.comprasBlanco;
-    return { ...d, acumVentas: acV, acumCompras: acC, acumDif: acV - acC };
+    return { ...d, acumVentas: acV, acumCompras: acC, acumDif: acV - acC, quedo: d.ventasBlanco + d.ventasNegro - d.comprasBlanco - d.comprasNegro };
   });
   return { grupos, dias: lista, diasSinVentas: lista.filter((d) => !d.hayVentas).length };
 }

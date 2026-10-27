@@ -1438,7 +1438,8 @@ function pageVentas() {
   </section>
 
   <section class="comp-full">
-  <div class="trip-h">6 · Ventas en blanco vs compras facturadas</div>
+  <div class="trip-h">6 · Ventas vs compras</div>
+  ${quedoHtml()}
   ${comparativoHtml()}
   </section>
   `;
@@ -1484,7 +1485,7 @@ function historialVentasHtml() {
     return rows.length ? { s, ...resumenGuardado(rows, h.desde, h.hasta).t } : null;
   }).filter(Boolean) : [];
   return `<div class="panel mb16" style="padding:16px;">
-    <div class="filters">${[["mes", "Este mes"], ["mesAnt", "Mes anterior"], ["año", "Este año"]].map(([k, l]) => `<button data-vrango="${k}">${l}</button>`).join("")}</div>
+    <div class="filters">${[["hoy", "Hoy"], ["ayer", "Ayer"], ["mes", "Este mes"], ["mesAnt", "Mes anterior"], ["año", "Este año"]].map(([k, l]) => `<button data-vrango="${k}">${l}</button>`).join("")}</div>
     <div class="row2">
       <div class="field" style="margin-bottom:12px;"><label>Desde</label><input type="date" id="vhDesde" value="${h.desde}"></div>
       <div class="field" style="margin-bottom:12px;"><label>Hasta</label><input type="date" id="vhHasta" value="${h.hasta}"></div>
@@ -1609,6 +1610,31 @@ function chartAcumulado(dias) {
 }
 
 /** Ventas en blanco vs compras facturadas: general, por sucursal, equilibrio y acumulado por día. */
+/** Cuadro grande: todo lo vendido (blanco + negro) menos todo lo comprado (blanco + negro) en el período y la sucursal elegidos. */
+function quedoHtml() {
+  const h = ventasHist;
+  if (h.cargando || h.error || !h.todas) return "";
+  const ids = state.sucursales.map((s) => s.id);
+  const cmp = compararVentasCompras(h.todas, h.compras || [], h.desde, h.hasta, ids);
+  const g = h.suc !== "todas" && cmp.grupos[h.suc] ? cmp.grupos[h.suc] : cmp.grupos.general;
+  if (!g.ventasTotal && !g.comprasTotal) return "";
+  const hoy = todayISO(), ayerD = new Date(); ayerD.setDate(ayerD.getDate() - 1);
+  const ayer = `${ayerD.getFullYear()}-${String(ayerD.getMonth() + 1).padStart(2, "0")}-${String(ayerD.getDate()).padStart(2, "0")}`;
+  const cuando = h.desde === h.hasta ? (h.desde === hoy ? "Hoy" : h.desde === ayer ? "Ayer" : fmtDate(h.desde)) : `Del ${fmtDate(h.desde)} al ${fmtDate(h.hasta)}`;
+  const donde = esGerente() ? sucursalNombre(state.perfil.sucursal_id) : h.suc !== "todas" ? sucursalNombre(h.suc) : "todas las sucursales";
+  const sinVentas = !g.ventasTotal;
+  return `<div class="quedo panel ${g.quedo >= 0 ? "quedo-pos" : "quedo-neg"}">
+    <div class="quedo-tit">${g.quedo >= 0 ? "Quedó" : "Faltó"} · ${esc(cuando)} · ${esc(donde)}</div>
+    <div class="quedo-num">${g.quedo < 0 ? "−" : ""}${fmtMoney(Math.abs(g.quedo))}</div>
+    <div class="quedo-cuenta">
+      <div><span>Ventas</span><b>${fmtMoney(g.ventasTotal)}</b><small>blanco ${fmtMoney(g.ventasBlanco)} + negro ${fmtMoney(g.ventasNegro)}</small></div>
+      <div class="quedo-op">−</div>
+      <div><span>Compras</span><b>${fmtMoney(g.comprasTotal)}</b><small>blanco ${fmtMoney(g.comprasBlanco)} + negro ${fmtMoney(g.comprasNegro)}</small></div>
+    </div>
+    ${sinVentas ? `<div class="quedo-aviso">Todavía no hay ventas guardadas en este período: cargá el libro de IVA o la carga manual.</div>` : ""}
+  </div>`;
+}
+
 function comparativoHtml() {
   const h = ventasHist;
   if (h.cargando || h.error || !h.todas) return "";
@@ -1674,10 +1700,10 @@ function comparativoHtml() {
 
   ${plegable("cmp-acum", "Gráfico acumulado del período", chartAcumulado(dias))}
   ${plegable("cmp-dias", "Día por día", `<div class="hoy-wrap"><table class="data-table">
-    <thead><tr><th>Día</th><th>Compras fact.</th><th>Ventas blanco</th><th>Diferencia del día</th><th>Acumulado</th></tr></thead>
-    <tbody>${dias.filter((d) => d.comprasBlanco || d.ventasBlanco || !d.hayVentas).map((d) => `<tr${d.hayVentas ? "" : ` class="sin-ventas" title="Sin ventas guardadas ese día"`}>
+    <thead><tr><th>Día</th><th>Compras fact.</th><th>Ventas blanco</th><th>Diferencia del día</th><th>Acumulado</th><th title="Ventas (blanco + negro) − compras (blanco + negro)">Quedó (todo)</th></tr></thead>
+    <tbody>${dias.filter((d) => d.comprasBlanco || d.ventasBlanco || d.comprasNegro || d.ventasNegro || !d.hayVentas).map((d) => `<tr${d.hayVentas ? "" : ` class="sin-ventas" title="Sin ventas guardadas ese día"`}>
       <td>${fmtDate(d.fecha)}${d.hayVentas ? "" : " ⚠️"}</td><td>${fmtMoney(d.comprasBlanco)}</td><td class="fact">${fmtMoney(d.ventasBlanco)}</td>
-      <td>${dif(d.ventasBlanco - d.comprasBlanco)}</td><td>${dif(d.acumDif)}</td></tr>`).join("")}</tbody>
+      <td>${dif(d.ventasBlanco - d.comprasBlanco)}</td><td>${dif(d.acumDif)}</td><td><b>${dif(d.quedo)}</b></td></tr>`).join("")}</tbody>
   </table></div>`)}`;
 }
 
@@ -2516,7 +2542,10 @@ function wirePage() {
     on("vhHasta", "change", histFechas);
     document.querySelectorAll("[data-vrango]").forEach((b) => b.addEventListener("click", () => {
       const k = b.dataset.vrango, hoy = new Date();
-      const [d, h] = k === "mes" ? monthRange() : k === "año" ? yearRange()
+      const ayer = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - 1);
+      const iso = (x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+      const [d, h] = k === "hoy" ? [todayISO(), todayISO()] : k === "ayer" ? [iso(ayer), iso(ayer)]
+        : k === "mes" ? monthRange() : k === "año" ? yearRange()
         : [new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1), new Date(hoy.getFullYear(), hoy.getMonth(), 0)].map((x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`);
       ventasHist = { ...ventasHist, desde: d, hasta: h, rows: null }; cargarHistVentas();
     }));
