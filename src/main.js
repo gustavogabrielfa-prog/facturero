@@ -2325,6 +2325,21 @@ function pageProveedores() {
 /* ---------- WIRE ---------- */
 function on(id, ev, fn) { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); return el; }
 
+/** Campo de fecha que recarga la pantalla: si se está escribiendo, espera a que termines (pausa, Enter o salir del campo);
+    si se eligió del calendario, aplica enseguida. Así escribir "25" no se corta en el "2". */
+function onFecha(id, fn) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  let t = null, tecla = 0, ultimo = el.value;
+  const aplicar = () => { clearTimeout(t); if (el.value === ultimo) return; ultimo = el.value; fn(); };
+  el.addEventListener("keydown", (e) => { tecla = Date.now(); if (e.key === "Enter") aplicar(); });
+  el.addEventListener("change", () => {
+    clearTimeout(t);
+    if (Date.now() - tecla < 1500) t = setTimeout(aplicar, 1200); else aplicar();
+  });
+  el.addEventListener("blur", aplicar);
+}
+
 function wireLogin() {
   on("loginForm", "submit", async (e) => {
     e.preventDefault();
@@ -2444,8 +2459,8 @@ function wirePage() {
       if (d === desde && h === hasta) return;
       desde = d; hasta = h; loadComprobantes();
     };
-    on("fDesde", "change", () => aplicarFechas("desde"));
-    on("fHasta", "change", () => aplicarFechas("hasta"));
+    onFecha("fDesde", () => aplicarFechas("desde"));
+    onFecha("fHasta", () => aplicarFechas("hasta"));
     on("btnAplicar", "click", () => {
       const d = document.getElementById("fDesde").value, h = document.getElementById("fHasta").value;
       if (!d || !h || d > h) { toast("Revisá el rango de fechas."); return; }
@@ -2538,8 +2553,8 @@ function wirePage() {
       if (!d || !h) return;
       ventasHist = { ...ventasHist, desde: d <= h ? d : h, hasta: d <= h ? h : d, rows: null }; cargarHistVentas();
     };
-    on("vhDesde", "change", histFechas);
-    on("vhHasta", "change", histFechas);
+    onFecha("vhDesde", histFechas);
+    onFecha("vhHasta", histFechas);
     document.querySelectorAll("[data-vrango]").forEach((b) => b.addEventListener("click", () => {
       const k = b.dataset.vrango, hoy = new Date();
       const ayer = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - 1);
@@ -2575,8 +2590,8 @@ function wirePage() {
       if (!d || !h) return;
       [er.desde, er.hasta] = d <= h ? [d, h] : [h, d]; recargar();
     };
-    on("erDesde", "change", periodo);
-    on("erHasta", "change", periodo);
+    onFecha("erDesde", periodo);
+    onFecha("erHasta", periodo);
     document.querySelectorAll("[data-errango]").forEach((b) => b.addEventListener("click", () => {
       const m = mesActual(), y = Number(m.slice(0, 4));
       [er.desde, er.hasta] = { mes: [m, m], mesAnt: [mesMas(m, -1), mesMas(m, -1)], tres: [mesMas(m, -2), m],
